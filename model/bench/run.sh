@@ -5,7 +5,7 @@ set -euo pipefail
 BENCH=${1:?usage: run.sh <bench-name>}
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SPIKE=/home/kitta/sifive/riscv-isa-sim/build/spike
-SPIKE_MEM="-m0x100000:0x300000,0x80000000:0x400000"
+SPIKE_MEM="-m0xf0000:0x310000,0x80000000:0x400000"
 SIMDIR=/home/kitta/paragato/cores/core-v-verif/cv32e40x/sim/core
 
 "$SPIKE" -l --isa=rv32imc_zicntr_zicsr_zifencei $SPIKE_MEM \

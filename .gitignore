@@ -20,3 +20,9 @@ build/
 # Python
 __pycache__/
 *.pyc
+
+# Spike traces and build outputs are regenerable via model/bench/build*.sh + run.sh
+*.trace
+model/bench/*.elf
+model/bench/*.bin
+model/bench/.*

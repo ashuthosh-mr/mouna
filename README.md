@@ -30,21 +30,31 @@ bring-up log.
   silently carried `0x0`.
 - **Cycle model (Milestone 1)**: `model/cv32e40x_model.py` consumes a Spike
   trace and predicts CV32E40X cycles from the user manual's documented pipeline
-  timings. Validated against RTL on kernels with different instruction mixes:
+  timings. Validated against RTL across Embench kernels with very different
+  instruction mixes (all runs use `LOCAL_SCALE_FACTOR=1` to keep RTL simulation
+  tractable; that scales repetitions only, not the algorithm):
 
   | benchmark | instrs | model | RTL (ground truth) | error |
   |---|---|---|---|---|
-  | matmult 8x8 (mul/load-heavy) | 5197 | 6852 | 6846 | **+0.09%** |
-  | Embench `statemate` (branch-heavy) | 1159 | 1639 | 1606 | **+2.05%** |
+  | `matmult-int` | 97,748 | 134,546 | 134,545 | **+0.00%** |
+  | `primecount` | 2,273,871 | 3,927,267 | 3,927,224 | **+0.00%** |
+  | `edn` | 49,365 | 65,190 | 65,179 | **+0.02%** |
+  | `md5sum` | 52,607 | 72,497 | 71,400 | +1.54% |
+  | `statemate` | 1,159 | 1,639 | 1,606 | +2.05% |
+  | `crc32` | 24,608 | 30,764 | 29,737 | +3.45% |
+  | `tarfind` | 53,846 | 122,437 | 117,149 | +4.51% |
 
   Per-instruction costs were independently calibrated against RTL
   (`rtl-tests/pg_mulcost`): measured `add`=1, `mul`=1, `mulh`=4 cycles, all
   matching the manual.
 
-  The residual on `statemate` is under investigation: the model flags 72
-  load-use hazards there and over-predicts by 33 cycles, suggesting a
-  load-to-store-data dependency does not stall (store data is consumed later in
-  the pipeline) whereas a load-to-ALU-source dependency does.
+  Every error is an over-prediction, i.e. the model is a consistent upper bound.
+  `tarfind`'s outlier is fully explained: it executes 770 `div`/`rem`
+  instructions, which cost 3-35 cycles depending on the divisor, and a Spike
+  `-l` trace does not record operand values -- so the model charges the worst
+  case and says so in its output. Recovering operand values (via
+  `spike --log-commits`) is the obvious fix. `crc32`'s residual is ~1 cycle
+  across ~1024 occurrences of a single event type and is not yet pinned down.
 
 ### Why alignment matters
 

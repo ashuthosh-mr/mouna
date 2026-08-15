@@ -5,7 +5,7 @@ ENTRY(_start)
 SECTIONS {
   . = 0x00000080;
   .text   : { *(.text.init) *(.text .text.*) }
-  .rodata : { *(.rodata .rodata.*) *(.srodata .srodata.*) }
+  . = 0x000F0000; .rodata : { *(.rodata .rodata.*) *(.srodata .srodata.*) }
   . = 0x00100000; .data : { *(.data .data.*) *(.sdata .sdata.*) }
   . = 0x00110000; .bss  : { *(.bss .bss.*) *(.sbss .sbss.*) *(COMMON) }
   _end = .;

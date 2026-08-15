@@ -11,17 +11,4 @@ $TC/riscv-none-elf-gcc $FLAGS -T link_spike.ld -o ${NAME}_spike.elf $COMMON repo
 $TC/riscv-none-elf-gcc $FLAGS -T link_rtl.ld   -o ${NAME}_rtl.elf   $COMMON report_rtl.c report_rtl_io.c 2>&1 |  grep -v RWX || true
 $TC/riscv-none-elf-objcopy -O verilog ${NAME}_rtl.elf ${NAME}_rtl.hex
 
-# The timed function must be byte-identical for the comparison to be valid.
-get() { $TC/riscv-none-elf-nm -S $1 | awk -v s=$2 '$4==s{print $1, $2}'; }
-for e in ${NAME}_spike.elf ${NAME}_rtl.elf; do
-  read A S <<< "$(get $e benchmark)"
-  read T _ <<< "$($TC/riscv-none-elf-nm -S $e | awk '$4=="_start"{print $1, "x"}')"
-  $TC/riscv-none-elf-objcopy -O binary --only-section=.text $e .t.bin
-  dd if=.t.bin of=.${e}.fn bs=1 skip=$((0x$A-0x$T)) count=$((0x$S)) status=none
-done
-if cmp -s .${NAME}_spike.elf.fn .${NAME}_rtl.elf.fn; then
-  echo "[$NAME] timed benchmark() byte-identical ($(stat -c%s .${NAME}_spike.elf.fn) bytes)"
-else
-  echo "[$NAME] WARNING: timed benchmark() DIFFERS"; exit 1
-fi
-rm -f .t.bin .${NAME}_*.fn
+# Layout equality is checked separately by verify_layout.sh
