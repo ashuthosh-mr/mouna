@@ -246,6 +246,34 @@ The natural next step reuses all of it: **use the model to predict Xpulp's
 benefit on CV32E40P and validate against its RTL**, exactly as was done for Zbb
 on CV32E40X (predicted to 2.7%).
 
+### Adding a custom instruction to CV32E40P (partial)
+
+CV32E40P has no extension interface, so a new instruction is added by editing
+the decoder directly. `patches/cv32e40p-pg-add3-custom-insn.patch` adds a
+minimal one to prove the mechanism:
+
+    pg.add3 rd, rs1, rs2    rd <- rs1 + rs2
+    R-type, opcode 7'h7b (custom-3), funct3 = 000, funct7 = 0000000
+
+guarded on `!COREV_PULP` so it cannot clash with the Xpulp SIMD instructions
+that otherwise own that opcode.
+
+Status: **the CV32E40P flow works, the instruction does not yet.** The control
+-- the identical program with a plain `add` instead of the custom one -- runs
+correctly on CV32E40P under Verilator (`BENCH cycles=652 result=0`), which
+confirms the harness, the 1 MB-aware linker script, and this core's peripheral
+addresses (`0x10000000` print, `0x20000004` exit -- note these differ from the
+CV32E40X testbench) are all correct. Swapping in `pg.add3` hangs, so the
+instruction is still being rejected by the decoder. Not yet diagnosed.
+
+Worth recording: `core-v-verif` clones its **own** copy of the core RTL into
+`core-v-cores/`, so patching the standalone `cores/cv32e40p` checkout has no
+effect on what is simulated. That cost one debug cycle here.
+
+Also: CV32E40P's testbench connects `data_wdata_o`/`data_rdata_i` correctly, so
+the store/load bug found in the CV32E40X testbench is specific to that core's
+testbench and is not a shared defect.
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,
