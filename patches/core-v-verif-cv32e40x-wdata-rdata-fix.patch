@@ -1,8 +1,28 @@
 diff --git a/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv b/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
-index d882efe..b830f1b 100644
+index d882efe..02e2d7e 100644
 --- a/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
 +++ b/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
-@@ -114,6 +114,12 @@ module cv32e40x_tb_wrapper
+@@ -76,8 +76,19 @@ module cv32e40x_tb_wrapper
+ 
+ 
+     // instantiate the core
++    // PARAGATO: the core's optional extensions are configurable parameters, but
++    // this testbench hardwired the defaults. Expose B_EXT so a benchmark can be
++    // run with and without bitmanip and the difference measured. Select with
++    // +define+PARAGATO_ZBA_ZBB_ZBS (or ..._ZBC) at Verilator compile time.
++    // Values are given numerically because the testbench sources are compiled
++    // before cv32e40x_pkg is declared, so the enum names are not yet visible.
+     cv32e40x_core #(
+                  .NUM_MHPMCOUNTERS (NUM_MHPMCOUNTERS)
++`ifdef PARAGATO_ZBA_ZBB_ZBC_ZBS
++                 , .B_EXT (2'd2)   // cv32e40x_pkg::ZBA_ZBB_ZBC_ZBS
++`elsif PARAGATO_ZBA_ZBB_ZBS
++                 , .B_EXT (2'd1)   // cv32e40x_pkg::ZBA_ZBB_ZBS
++`endif
+                 )
+     cv32e40x_core_i
+         (
+@@ -114,6 +125,12 @@ module cv32e40x_tb_wrapper
           .data_we_o              ( data_we               ),
           .data_be_o              ( data_be               ),
           .data_addr_o            ( data_addr             ),
@@ -15,7 +35,7 @@ index d882efe..b830f1b 100644
           .data_memtype_o         (                       ), // TODO: should the core tb check this?
           .data_prot_o            (                       ), // TODO: should the core tb check this?
           .data_dbg_o             (                       ), // TODO
-@@ -199,4 +205,13 @@ module cv32e40x_tb_wrapper
+@@ -199,4 +216,22 @@ module cv32e40x_tb_wrapper
           .exit_valid_o   ( exit_valid_o                              ),
           .exit_value_o   ( exit_value_o                              ));
  
@@ -23,9 +43,18 @@ index d882efe..b830f1b 100644
 +    // The `core` testbench instantiates cv32e40x_core directly rather than
 +    // cv32e40x_wrapper, so cv32e40x_core_log (illegal-instruction logging) is never
 +    // instantiated and there is no RVFI tracer available here.
++    // +pctrace   : one line per cycle, gated on if_id_pipe.instr_valid so that
++    //              stale/flushed PCs are not reported. A PC repeating on
++    //              consecutive lines therefore means a genuine ID-stage stall.
++    // +cyctrace  : same, but every cycle including invalid ones, tagged with
++    //              validity -- use when you need an exact cycle timeline.
 +    always_ff @(posedge clk_i) begin: paragato_pctrace
-+        if ($test$plusargs("pctrace"))
++        if ($test$plusargs("pctrace") && cv32e40x_core_i.if_id_pipe.instr_valid)
 +            $display("PC=0x%08x", cv32e40x_core_i.if_id_pipe.pc);
++        if ($test$plusargs("cyctrace"))
++            $display("CYC v=%0d PC=0x%08x",
++                     cv32e40x_core_i.if_id_pipe.instr_valid,
++                     cv32e40x_core_i.if_id_pipe.pc);
 +    end
 +
  endmodule // cv32e40x_tb_wrapper

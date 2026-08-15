@@ -74,6 +74,28 @@ The value is elsewhere:
    branch-taken counts, hazards and stalls behind its estimate, which a bare
    cycle count from RTL does not give you.
 
+### Milestone 2: predicting the benefit of a hardware change
+
+The point of the model is to score a design *before* it is built. This is
+testable on CV32E40X because its optional extensions are RTL parameters that
+already exist -- so the model's prediction can be checked against real hardware.
+
+Taking Embench `edn` and enabling the bitmanip extension (`B_EXT = ZBA_ZBB_ZBS`,
+plus `-march=...zba_zbb_zbs` so the compiler emits `sext.h`/`zext.h`/`sh1add`):
+
+  | | model | RTL | model error |
+  |---|---|---|---|
+  | baseline (`B_EXT = B_NONE`) | 65,190 | 65,179 | +0.02% |
+  | with Zbb (`B_EXT = ZBA_ZBB_ZBS`) | 61,620 | 61,510 | +0.18% |
+  | **cycles saved** | **3,570** | **3,669** | **-2.7%** |
+
+Both builds return the same benchmark result, so the comparison is valid. The
+model predicted the benefit of enabling bitmanip to within 2.7% -- from a Spike
+trace alone, before the bitmanip hardware was switched on.
+
+`B_EXT` is selected with `+define+PARAGATO_ZBA_ZBB_ZBS` at Verilator compile
+time (the stock testbench hardwired the core's defaults; see `patches/`).
+
 ### Why alignment matters
 
 Getting here required a methodological fix worth stating plainly. On CV32E40X a
