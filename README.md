@@ -213,6 +213,39 @@ the eXtension interface**. That confirms from the documentation what the stall
 breakdown implied -- the single largest cost on these kernels is structurally
 out of reach for any CV-X-IF coprocessor.
 
+### What CV32E40P shows, and whether CV32E40X was the right target
+
+CV32E40P implements post-increment load/store natively. Its decoder sets *two*
+register-file write enables for a single instruction:
+
+    regfile_mem_we = 1    // loaded data  -> rd    (memory writeback port)
+    regfile_alu_we = 1    // rs1 + offset -> rs1   (ALU writeback port)
+
+That needs a dual-write-port register file, which CV32E40P has. The consequence
+for anything built over CV-X-IF:
+
+- **Post-increment store** needs only one writeback (a store returns no data,
+  so only the pointer is written). It *is* expressible over CV-X-IF.
+- **Post-increment load** needs two arbitrary register writes. CV-X-IF provides
+  one; `dualwrite` writes `rd` and `rd+1`, not `rs1`. So `p.lw` **cannot be
+  expressed over CV-X-IF at all** and has to live inside the pipeline.
+
+Together with the two other limits measured here -- ~2 cycles of offload latency
+per instruction, and control-transfer instructions being unsupported over the
+interface by specification -- the picture is consistent: **CV-X-IF is built for
+coarse-grained, multi-cycle compute offload, not for fine-grained ISA
+extension.** Xpulp's post-increment addressing and hardware loops are in the
+pipeline because that is the only place they can be.
+
+So was CV32E40X the wrong choice? For the original goal -- *make one application
+fast by adding custom instructions* -- CV32E40P would have been the better
+vehicle, and the evidence for that is exactly what this project measured. But
+the CV32E40X work is what produced the evidence, plus a validated cycle model,
+the extension-selection result, and a stall breakdown that are all core-agnostic.
+The natural next step reuses all of it: **use the model to predict Xpulp's
+benefit on CV32E40P and validate against its RTL**, exactly as was done for Zbb
+on CV32E40X (predicted to 2.7%).
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,
