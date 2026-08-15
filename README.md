@@ -96,6 +96,39 @@ trace alone, before the bitmanip hardware was switched on.
 `B_EXT` is selected with `+define+PARAGATO_ZBA_ZBB_ZBS` at Verilator compile
 time (the stock testbench hardwired the core's defaults; see `patches/`).
 
+### Where the cycles go
+
+The model reports not just a cycle count but *why* those cycles were spent,
+decomposing `cycles = compute (IPC=1 ideal) + stalls by microarchitectural
+cause`. A raw cycle count from RTL cannot tell you this.
+
+| benchmark | cycles | IPC | compute | branch flush | target misalign | jump flush | load-use |
+|---|---|---|---|---|---|---|---|
+| `matmult-int` | 134,546 | 0.73 | 72.7% | 16.6% | 8.3% | 2.4% | - |
+| `primecount` | 3,927,267 | 0.58 | 57.9% | 23.7% | 5.7% | 1.7% | 11.1% |
+| `edn` | 65,190 | 0.76 | 75.7% | 14.7% | 6.9% | 1.4% | 1.3% |
+| `crc32` | 30,764 | 0.80 | 80.0% | 6.7% | 6.7% | 6.7% | - |
+| `md5sum` | 72,497 | 0.73 | 72.6% | 17.0% | 3.6% | 6.8% | 0.0% |
+| `statemate` | 1,639 | 0.71 | 70.7% | 13.3% | 5.8% | 5.8% | 4.4% |
+| `tarfind` | 118,587 | 0.45 | 45.4% | 17.2% | 9.1% | 9.1% | 0.4% |
+
+Two things fall straight out of this:
+
+- **Control flow, not arithmetic, is the bottleneck.** Branch and jump flushes
+  cost 8-25% of all cycles on every kernel. On this 4-stage pipeline a taken
+  branch costs 3 cycles and resolves in EX, so there is no branch predictor to
+  hide it.
+- **`target_misalign` is free money.** 3.6-9.1% of cycles are lost purely
+  because a branch target happens to be a non-word-aligned 32-bit instruction,
+  which costs the pipeline an extra cycle. On `edn` that is 4,478 cycles --
+  *larger than the 3,669 cycles won by enabling the whole bitmanip extension*.
+  It needs no hardware change at all, only branch-target alignment from the
+  compiler or linker.
+
+This is the data a custom-instruction search needs: it says which cycles are
+actually recoverable, and therefore which candidate instructions are worth
+generating hardware for.
+
 ### Why alignment matters
 
 Getting here required a methodological fix worth stating plainly. On CV32E40X a

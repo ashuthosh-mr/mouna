@@ -157,6 +157,8 @@ class CV32E40XModel:
         self.div_cycles = div_cycles
         self.verbose = verbose
         self.notes = Counter()
+        # Cycles above the IPC=1 ideal, attributed to microarchitectural cause.
+        self.stalls = Counter()
 
     def target_penalty(self, nxt):
         """+1 cycle when a control-flow target is a non-word-aligned,
@@ -168,11 +170,21 @@ class CV32E40XModel:
         return 0
 
     def insn_cycles(self, ins, nxt):
+        """Cycles for one instruction.
+
+        Every instruction costs a baseline 1 cycle (the IPC=1 ideal for this
+        single-issue in-order pipeline); anything above that is recorded in
+        self.stalls under the microarchitectural cause, so the total decomposes
+        as: cycles = instructions + sum(stalls).
+        """
         b = base_mnem(ins.mnem)
 
         if b in FENCES:
             self.notes["fence"] += 1
-            return 5 + self.target_penalty(nxt)
+            pen = self.target_penalty(nxt)
+            self.stalls["fence"] += 4
+            self.stalls["target_misalign"] += pen
+            return 5 + pen
 
         if b in CSR_INSNS:
             self.notes["csr"] += 1
@@ -184,11 +196,15 @@ class CV32E40XModel:
                 # Manual: 3 cycles when the divisor has no leading zeros, 35 when
                 # the divisor is 0 -- i.e. 3 + clz(divisor).
                 self.notes["div_rem_exact"] += 1
-                return 3 + clz32(ins.div_operand)
-            return self.div_cycles
+                c = 3 + clz32(ins.div_operand)
+            else:
+                c = self.div_cycles
+            self.stalls["div_multicycle"] += c - 1
+            return c
 
         if b in MUL_HIGH:
             self.notes["mulh"] += 1
+            self.stalls["mul_multicycle"] += 3
             return 4
 
         if b == "mul":
@@ -206,13 +222,19 @@ class CV32E40XModel:
             taken = nxt is not None and nxt.pc != ins.fallthrough
             if taken:
                 self.notes["branch_taken"] += 1
-                return 3 + self.target_penalty(nxt)
+                pen = self.target_penalty(nxt)
+                self.stalls["branch_flush"] += 2
+                self.stalls["target_misalign"] += pen
+                return 3 + pen
             self.notes["branch_not_taken"] += 1
             return 1
 
         if b in JUMPS:
             self.notes["jump"] += 1
-            return 2 + self.target_penalty(nxt)
+            pen = self.target_penalty(nxt)
+            self.stalls["jump_flush"] += 1
+            self.stalls["target_misalign"] += pen
+            return 2 + pen
 
         self.notes["alu"] += 1
         return 1  # integer computational, Zba/Zbb/Zbc/Zbs, Zca/Zcb
@@ -229,9 +251,12 @@ class CV32E40XModel:
         prev_is_load = base_mnem(prev.mnem) in LOADS
         if base_mnem(ins.mnem) in JALR_LIKE:
             self.notes["hazard_jalr"] += 1
-            return 2 if prev_is_load else 1
+            p = 2 if prev_is_load else 1
+            self.stalls["raw_jalr"] += p
+            return p
         if prev_is_load:
             self.notes["hazard_load_use"] += 1
+            self.stalls["raw_load_use"] += 1
             return 1
         return 0
 
@@ -301,6 +326,20 @@ def main():
     print(f"Model cycles : {cycles}")
     if region:
         print(f"Model CPI    : {cycles / len(region):.3f}")
+
+    # Where the cycles went: cycles = instructions (IPC=1 ideal) + stalls.
+    n = len(region)
+    stall_total = sum(model.stalls.values())
+    print("\nCycle breakdown (cycles = compute + stalls):")
+    print(f"  {'compute (1/instr)':<22} {n:>10}  {100.0*n/cycles:5.1f}%")
+    for k, v in sorted(model.stalls.items(), key=lambda kv: -kv[1]):
+        if v:
+            print(f"  {'stall: ' + k:<22} {v:>10}  {100.0*v/cycles:5.1f}%")
+    print(f"  {'-- total stalls':<22} {stall_total:>10}  {100.0*stall_total/cycles:5.1f}%")
+    ideal = n
+    print(f"\n  ideal cycles (IPC=1)  {ideal}")
+    print(f"  achieved IPC          {n/cycles:.3f}   "
+          f"(headroom to IPC=1: {100.0*stall_total/cycles:.1f}% of cycles)")
 
     print("\nInstruction mix / events:")
     for k, v in sorted(model.notes.items(), key=lambda kv: -kv[1]):
