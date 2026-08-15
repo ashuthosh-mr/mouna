@@ -193,6 +193,26 @@ multiply-accumulate that looked best under the naive scoring drops to 0.6%.
 That is the same conclusion Xpulp reached, now derived from measurement on this
 core rather than assumed.
 
+#### Post-increment store (`pg.swpi`): written, not yet working
+
+`rtl/pg_xif_swpi.sv` implements the top candidate under corrected scoring --
+`mem[rs1] <- rs2; rd <- rs1 + 4` -- as a CV-X-IF coprocessor using the optional
+`xif_mem` interface (an FSM: issue -> memory request -> memory result ->
+register writeback, since it both stores and updates the pointer).
+
+Status: elaborates, and the baseline binary runs correctly on the X_EXT core
+(`bench_swpi.c`: 6,203 cycles, result 3,584). The offloaded version hangs. The
+`xif_mem` handshake is not right yet; the most likely cause is that the
+coprocessor drives its memory request without regard to `commit_valid`, so a
+request may be issued for an instruction the core has not committed. Not yet
+diagnosed properly.
+
+Worth recording from the spec while here: the CV32E40X manual states plainly
+that **control-transfer instructions (branches and jumps) are not supported via
+the eXtension interface**. That confirms from the documentation what the stall
+breakdown implied -- the single largest cost on these kernels is structurally
+out of reach for any CV-X-IF coprocessor.
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,

@@ -1,5 +1,5 @@
 diff --git a/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv b/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
-index d882efe..8a5b469 100644
+index d882efe..e5fc4ef 100644
 --- a/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
 +++ b/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
 @@ -67,7 +67,11 @@ module cv32e40x_tb_wrapper
@@ -14,10 +14,25 @@ index d882efe..8a5b469 100644
          .X_MEM_WIDTH ( 32 ),
          .X_RFR_WIDTH ( 32 ),
          .X_RFW_WIDTH ( 32 ),
-@@ -75,9 +79,40 @@ module cv32e40x_tb_wrapper
+@@ -75,9 +79,57 @@ module cv32e40x_tb_wrapper
      ) ext_if();
  
  
++`ifdef PARAGATO_XIF_SWPI
++    // PARAGATO: post-increment store, the top candidate once CV-X-IF offload
++    // latency is charged. Uses the optional xif_mem interface.
++    pg_xif_swpi pg_xif_swpi_i (
++        .clk_i  (clk_i),
++        .rst_ni (rst_ni),
++        .xif_compressed_if (ext_if),
++        .xif_issue_if      (ext_if),
++        .xif_commit_if     (ext_if),
++        .xif_mem_if        (ext_if),
++        .xif_mem_result_if (ext_if),
++        .xif_result_if     (ext_if)
++    );
++`endif
++
 +`ifdef PARAGATO_XIF_MAC
 +    // PARAGATO: fused multiply-accumulate offloaded over CV-X-IF. See
 +    // rtl/pg_xif_mac.sv; candidate identified by model/find_candidates.py.
@@ -51,11 +66,13 @@ index d882efe..8a5b469 100644
 +`ifdef PARAGATO_XIF_MAC
 +                 , .X_EXT (1'b1)
 +                 , .X_NUM_RS (3)
++`elsif PARAGATO_XIF_SWPI
++                 , .X_EXT (1'b1)     // pg.swpi needs only rs1, rs2
 +`endif
                  )
      cv32e40x_core_i
          (
-@@ -114,6 +149,12 @@ module cv32e40x_tb_wrapper
+@@ -114,6 +166,12 @@ module cv32e40x_tb_wrapper
           .data_we_o              ( data_we               ),
           .data_be_o              ( data_be               ),
           .data_addr_o            ( data_addr             ),
@@ -68,7 +85,7 @@ index d882efe..8a5b469 100644
           .data_memtype_o         (                       ), // TODO: should the core tb check this?
           .data_prot_o            (                       ), // TODO: should the core tb check this?
           .data_dbg_o             (                       ), // TODO
-@@ -199,4 +240,22 @@ module cv32e40x_tb_wrapper
+@@ -199,4 +257,22 @@ module cv32e40x_tb_wrapper
           .exit_valid_o   ( exit_valid_o                              ),
           .exit_value_o   ( exit_value_o                              ));
  
