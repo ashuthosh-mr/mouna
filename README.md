@@ -30,17 +30,21 @@ bring-up log.
   silently carried `0x0`.
 - **Cycle model (Milestone 1)**: `model/cv32e40x_model.py` consumes a Spike
   trace and predicts CV32E40X cycles from the user manual's documented pipeline
-  timings. On an 8x8 integer matmul kernel:
+  timings. Validated against RTL on kernels with different instruction mixes:
 
-  | | cycles |
-  |---|---|
-  | Model (from Spike trace) | 5842 |
-  | CV32E40X RTL (Verilator, ground truth) | 5844 |
-  | **Error** | **-0.03%** |
+  | benchmark | instrs | model | RTL (ground truth) | error |
+  |---|---|---|---|---|
+  | matmult 8x8 (mul/load-heavy) | 5197 | 6852 | 6846 | **+0.09%** |
+  | Embench `statemate` (branch-heavy) | 1159 | 1639 | 1606 | **+2.05%** |
 
   Per-instruction costs were independently calibrated against RTL
   (`rtl-tests/pg_mulcost`): measured `add`=1, `mul`=1, `mulh`=4 cycles, all
   matching the manual.
+
+  The residual on `statemate` is under investigation: the model flags 72
+  load-use hazards there and over-predicts by 33 cycles, suggesting a
+  load-to-store-data dependency does not stall (store data is consumed later in
+  the pipeline) whereas a load-to-ALU-source dependency does.
 
 ### Why alignment matters
 
