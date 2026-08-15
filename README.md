@@ -126,26 +126,52 @@ all. CV-X-IF offloads instructions; a zero-overhead hardware loop changes how
 the core fetches, so it has to live inside the pipeline. That is presumably why
 Xpulp implemented hardware loops in the core rather than behind an interface.
 
-#### Coprocessor: work in progress, not yet working
+#### Coprocessor: it works, and it teaches something the model got wrong
 
-`rtl/pg_xif_mac.sv` implements the top-ranked compute-only candidate (`pg.mac`,
-a fused multiply-accumulate) as a CV-X-IF coprocessor, wired into the testbench
-behind `+define+PARAGATO_XIF_MAC` with `X_EXT=1, X_NUM_RS=3`. It elaborates and
-the baseline binary runs correctly on the X_EXT-enabled core (13,321 cycles on
-`bench_mac.c`), but **the offloaded instruction hangs the core** -- the run
-reaches the 2,000,000-cycle limit without retiring.
+`rtl/pg_xif_mac.sv` implements the top compute-only candidate (`pg.mac`, a fused
+multiply-accumulate) as a real CV-X-IF coprocessor, wired in behind
+`+define+PARAGATO_XIF_MAC` with `X_EXT=1, X_NUM_RS=3`. It computes correctly --
+the offloaded and baseline builds agree on the result -- and the core no longer
+stalls.
 
-Diagnosis so far: the coprocessor asserts `result_valid` combinationally in the
-same cycle as `issue_valid`. CV-X-IF requires the result phase to follow commit
-and `result_valid` to be held until `result_ready` handshakes, so the result is
-offered and withdrawn in one cycle and the instruction never completes. The fix
-is to register the accepted instruction (id, rd, computed value) and hold the
-result until acknowledged. Not yet implemented.
+But the measured speedup is **zero**:
 
-One real subtlety already found and fixed along the way: CV-X-IF sources its
-third operand from `instr[31:27]`, so a three-input custom instruction must be
-encoded **R4-type** with the accumulator in `rs3`. It is *not* read back from
-`rd`, which is the natural but wrong assumption.
+  | build | cycles | result |
+  |---|---|---|
+  | baseline (`mul` + `add`) | 13,321 | 1 |
+  | `pg.mac` over CV-X-IF | 13,321 | 1 |
+
+The model predicted fusing `mul; add` would save one cycle per execution. It
+does remove one instruction from the loop. The saving does not materialise
+because **the offload itself costs a cycle**: the result has to be registered
+and handed back over `result_valid`/`result_ready`, so `pg.mac` retires in 2
+cycles where `mul; add` took 2. Fusing two single-cycle instructions across
+CV-X-IF is break-even by construction.
+
+This is a real limitation of the scoring, not of the hardware, and it is the
+most useful thing the exercise produced:
+
+- **The candidate finder over-values short fusions.** It scores a fused
+  candidate at 1 cycle. It must instead charge the interface round-trip, which
+  means a 2-instruction fusion can never win and a sequence must be *at least 3
+  cycles* before CV-X-IF offload pays for itself.
+- **It explains Xpulp's design.** PULP put post-increment load/store and
+  hardware loops *inside* the pipeline rather than behind an extension
+  interface. In-pipeline ops have no offload latency to amortise; that is
+  exactly the cost measured here.
+- Combined with the earlier finding that branch flush (the largest single cost)
+  is unreachable through CV-X-IF at all, the honest conclusion for this core is
+  that CV-X-IF suits *multi-cycle* compute offload, not fine-grained fusion.
+
+Two CV-X-IF subtleties found by building it, both worth knowing:
+
+1. The third operand comes from `instr[31:27]`, so a 3-input custom instruction
+   must be encoded **R4-type** with the accumulator in `rs3`. It is *not* read
+   back from `rd`.
+2. `result_valid` must be **registered and held until `result_ready`**.
+   Asserting it combinationally alongside `issue_valid` offers and withdraws the
+   result in one cycle; the core never sees the instruction complete and the
+   pipeline hangs forever.
 
 ### Where the cycles go
 

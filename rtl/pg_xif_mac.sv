@@ -17,10 +17,12 @@
 // It needs three register-file sources (rs1, rs2 and rd read as the
 // accumulator), so the core must be configured with X_NUM_RS = 3.
 //
-// Timing: the multiply-add is done combinationally and the result is offered in
-// the same cycle the instruction is accepted, so the instruction retires in a
-// single cycle -- which is what the cycle model assumes when it scores a fused
-// candidate at 1 cycle.
+// Protocol: the multiply-add itself is combinational, but the result must be
+// *registered* and held until the core acknowledges it with result_ready.
+// Asserting result_valid combinationally in the same cycle as issue_valid
+// offers and withdraws the result in one cycle, the core never observes the
+// offload completing, and the pipeline stalls forever. Only one offloaded
+// instruction is in flight at a time, which is enough for a single-cycle op.
 
 module pg_xif_mac
   import cv32e40x_pkg::*;
@@ -49,8 +51,15 @@ module pg_xif_mac
   logic [31:0] instr;
   logic        is_mac;
 
+  // Result-holding registers (declared here: is_mac and issue_ready depend on
+  // res_pending, so it must exist before those assignments).
+  logic                   res_pending;
+  logic [31:0]            res_data;
+  logic [4:0]             res_rd;
+  logic [X_ID_WIDTH-1:0]  res_id;
+
   assign instr  = xif_issue_if.issue_req.instr;
-  assign is_mac = xif_issue_if.issue_valid
+  assign is_mac = xif_issue_if.issue_valid && !res_pending
                   && (instr[6:0]   == OPCODE_CUSTOM0)
                   && (instr[14:12] == FUNCT3_MAC)
                   && (instr[26:25] == FUNCT2_MAC)
@@ -58,8 +67,8 @@ module pg_xif_mac
                   && (&xif_issue_if.issue_req.rs_valid[2:0]);
 
   // ----------------------------------------------------------------- issue --
-  // Accept combinationally; nothing here can stall.
-  assign xif_issue_if.issue_ready              = 1'b1;
+  // Refuse new work while a result is still waiting to be accepted.
+  assign xif_issue_if.issue_ready              = !res_pending;
   assign xif_issue_if.issue_resp.accept        = is_mac;
   assign xif_issue_if.issue_resp.writeback     = is_mac;
   assign xif_issue_if.issue_resp.dualwrite     = 1'b0;
@@ -75,11 +84,32 @@ module pg_xif_mac
   assign sum     = xif_issue_if.issue_req.rs[2] + product;
 
   // ---------------------------------------------------------------- result --
-  assign xif_result_if.result_valid   = is_mac;
-  assign xif_result_if.result.id      = xif_issue_if.issue_req.id;
-  assign xif_result_if.result.data    = sum;
-  assign xif_result_if.result.rd      = instr[11:7];
-  assign xif_result_if.result.we      = is_mac;
+  // Capture on accept, then hold result_valid until result_ready handshakes.
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      res_pending <= 1'b0;
+      res_data    <= '0;
+      res_rd      <= '0;
+      res_id      <= '0;
+    end else if (is_mac) begin
+      res_pending <= 1'b1;
+      res_data    <= sum;
+      res_rd      <= instr[11:7];
+      res_id      <= xif_issue_if.issue_req.id;
+    end else if (res_pending && xif_result_if.result_ready) begin
+      res_pending <= 1'b0;
+    end else if (res_pending && xif_commit_if.commit_valid
+                 && xif_commit_if.commit.commit_kill
+                 && (xif_commit_if.commit.id == res_id)) begin
+      res_pending <= 1'b0;   // speculative instruction was killed
+    end
+  end
+
+  assign xif_result_if.result_valid   = res_pending;
+  assign xif_result_if.result.id      = res_id;
+  assign xif_result_if.result.data    = res_data;
+  assign xif_result_if.result.rd      = res_rd;
+  assign xif_result_if.result.we      = 1'b1;
   assign xif_result_if.result.ecsdata = '0;
   assign xif_result_if.result.ecswe   = '0;
   assign xif_result_if.result.exc     = 1'b0;
