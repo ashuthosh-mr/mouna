@@ -246,33 +246,41 @@ The natural next step reuses all of it: **use the model to predict Xpulp's
 benefit on CV32E40P and validate against its RTL**, exactly as was done for Zbb
 on CV32E40X (predicted to 2.7%).
 
-### Adding a custom instruction to CV32E40P (partial)
+### Adding a custom instruction to CV32E40P: works
 
 CV32E40P has no extension interface, so a new instruction is added by editing
-the decoder directly. `patches/cv32e40p-pg-add3-custom-insn.patch` adds a
-minimal one to prove the mechanism:
+the decoder. `patches/cv32e40p-pg-add3-custom-insn.patch` adds one and it runs:
 
     pg.add3 rd, rs1, rs2    rd <- rs1 + rs2
-    R-type, opcode 7'h7b (custom-3), funct3 = 000, funct7 = 0000000
+    R-type, opcode 7'h7b (RISC-V custom-3), funct3 = 000, funct7 = 0000000
 
-guarded on `!COREV_PULP` so it cannot clash with the Xpulp SIMD instructions
-that otherwise own that opcode.
+| build | cycles | result |
+|---|---|---|
+| control (plain `add`) | 652 | 0 |
+| `pg.add3` (custom instruction) | 652 | 0 |
 
-Status: **the CV32E40P flow works, the instruction does not yet.** The control
--- the identical program with a plain `add` instead of the custom one -- runs
-correctly on CV32E40P under Verilator (`BENCH cycles=652 result=0`), which
-confirms the harness, the 1 MB-aware linker script, and this core's peripheral
-addresses (`0x10000000` print, `0x20000004` exit -- note these differ from the
-CV32E40X testbench) are all correct. Swapping in `pg.add3` hangs, so the
-instruction is still being rejected by the decoder. Not yet diagnosed.
+`result=0` means all 64 test inputs matched a plain `add`, so the instruction
+computes correctly. The identical cycle count is the point: an in-pipeline
+custom instruction is genuinely single-cycle, with **no offload penalty** --
+unlike the CV-X-IF multiply-accumulate, which cost 2 cycles and therefore won
+nothing. This is the concrete reason Xpulp lives in the pipeline.
 
-Worth recording: `core-v-verif` clones its **own** copy of the core RTL into
-`core-v-cores/`, so patching the standalone `cores/cv32e40p` checkout has no
-effect on what is simulated. That cost one debug cycle here.
+Adding it required only: one decode arm setting `regfile_alu_we`,
+`rega_used_o`, `regb_used_o`, `alu_operator_o` and clearing `illegal_insn_o`.
+No pipeline, register-file or LSU changes for an ALU-shaped instruction.
 
-Also: CV32E40P's testbench connects `data_wdata_o`/`data_rdata_i` correctly, so
-the store/load bug found in the CV32E40X testbench is specific to that core's
-testbench and is not a shared defect.
+Two traps worth knowing when doing this:
+
+1. `core-v-verif` clones its **own** copy of the core RTL into `core-v-cores/`
+   and runs `git checkout <pinned-sha>` on **every build**. Patching the
+   standalone `cores/cv32e40p` checkout has no effect on what is simulated, and
+   the pinned revision differs from `master` -- here it predates the
+   `OPCODE_CUSTOM_0..3` naming and uses `OPCODE_PULP_OP` (`7'h5b`) and
+   `OPCODE_VECOP` (`7'h57`), leaving `7'h7b` free.
+2. Deleting that clone's `.git` to protect local edits **breaks the build**, as
+   the checkout step then fails hard. Because the clone is already at the pinned
+   sha, `git checkout` is a no-op that leaves working-tree edits intact, so
+   local RTL changes survive rebuilds without any intervention.
 
 ### Where the cycles go
 
