@@ -28,16 +28,32 @@ bring-up log.
   core-v-verif's testbench (see `patches/`) -- `data_wdata_o`/`data_rdata_i`
   were never connected between the core and memory, so every store/load
   silently carried `0x0`.
-- First cross-validated measurement (8x8 int matmul, `rdcycle`-timed,
-  measurement window verified via disassembly to contain only the kernel):
+- **Cycle model (Milestone 1)**: `model/cv32e40x_model.py` consumes a Spike
+  trace and predicts CV32E40X cycles from the user manual's documented pipeline
+  timings. On an 8x8 integer matmul kernel:
 
   | | cycles |
   |---|---|
-  | Spike ISS (instruction count, not timing) | 4085 |
-  | CV32E40X RTL (Verilator, real cycles) | 6356 |
+  | Model (from Spike trace) | 5842 |
+  | CV32E40X RTL (Verilator, ground truth) | 5844 |
+  | **Error** | **-0.03%** |
 
-  The ~1.56x gap is exactly why a microarchitectural model is needed --
-  Spike's count is not a usable proxy for real core timing on its own.
+  Per-instruction costs were independently calibrated against RTL
+  (`rtl-tests/pg_mulcost`): measured `add`=1, `mul`=1, `mulh`=4 cycles, all
+  matching the manual.
+
+### Why alignment matters
+
+Getting here required a methodological fix worth stating plainly. On CV32E40X a
+taken branch costs **3 cycles, or 4 when its target is a non-word-aligned,
+non-RVC instruction**. Two builds of the same C source, linked at different
+base addresses, place the loop at different alignments and therefore genuinely
+execute at different cycle counts -- we measured 5844 vs 6356 for the same
+algorithm. A model trace and its RTL ground truth must therefore come from
+binaries with identical code layout, not merely identical source. `model/bench/`
+builds one source twice (Spike at 0x80000000, RTL at 0x0) with matched layout to
+make the comparison valid.
+
 
 ## Layout
 

@@ -1,0 +1,5 @@
+name: pg_mulcost
+uvm_test: uvmt_$(CV_CORE_LC)_firmware_test_c
+description: >
+    Per-instruction cost calibration (add/mul/mulh dependent chains) used to
+    validate the CV32E40X cycle model against real RTL timing.
