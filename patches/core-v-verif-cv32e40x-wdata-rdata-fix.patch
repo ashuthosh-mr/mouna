@@ -1,0 +1,51 @@
+diff --git a/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv b/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
+index d882efe..b830f1b 100644
+--- a/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
++++ b/cv32e40x/tb/core/cv32e40x_tb_wrapper.sv
+@@ -114,6 +114,12 @@ module cv32e40x_tb_wrapper
+          .data_we_o              ( data_we               ),
+          .data_be_o              ( data_be               ),
+          .data_addr_o            ( data_addr             ),
++         // PARAGATO fix: data_wdata_o / data_rdata_i were not connected at all in
++         // this legacy `core` testbench, so every store wrote 0x0 and every load
++         // returned 0x0. Verilator's PINMISSING warning is suppressed by the
++         // Makefile's --Wno-lint, so this failed silently.
++         .data_wdata_o           ( data_wdata            ),
++         .data_rdata_i           ( data_rdata            ),
+          .data_memtype_o         (                       ), // TODO: should the core tb check this?
+          .data_prot_o            (                       ), // TODO: should the core tb check this?
+          .data_dbg_o             (                       ), // TODO
+@@ -199,4 +205,13 @@ module cv32e40x_tb_wrapper
+          .exit_valid_o   ( exit_valid_o                              ),
+          .exit_value_o   ( exit_value_o                              ));
+ 
++    // PARAGATO debug aid: dump the ID-stage PC every cycle when +pctrace is given.
++    // The `core` testbench instantiates cv32e40x_core directly rather than
++    // cv32e40x_wrapper, so cv32e40x_core_log (illegal-instruction logging) is never
++    // instantiated and there is no RVFI tracer available here.
++    always_ff @(posedge clk_i) begin: paragato_pctrace
++        if ($test$plusargs("pctrace"))
++            $display("PC=0x%08x", cv32e40x_core_i.if_id_pipe.pc);
++    end
++
+ endmodule // cv32e40x_tb_wrapper
+diff --git a/cv32e40x/tb/core/mm_ram.sv b/cv32e40x/tb/core/mm_ram.sv
+index d2457d4..66d8d37 100644
+--- a/cv32e40x/tb/core/mm_ram.sv
++++ b/cv32e40x/tb/core/mm_ram.sv
+@@ -75,9 +75,13 @@ module mm_ram
+ 
+     localparam int                        RND_IRQ_ID     = 31;
+ 
+-    localparam int                        MMADDR_PRINT          = 32'h1000_0000;
++    // NOTE: MMADDR_PRINT/MMADDR_EXIT remapped to match the BSP's corev_uvmt.h
++    // virtual-peripheral addresses (CV_VP_VIRTUAL_PRINTER_BASE / CV_VP_STATUS_FLAGS_BASE+4),
++    // since bsp/syscalls.c (_write/_exit) targets those addresses regardless of which
++    // testbench (core vs uvmt) is driving the core.
++    localparam int                        MMADDR_PRINT          = 32'h0080_0000;
+     localparam int                        MMADDR_TESTSTATUS     = 32'h2000_0000;
+-    localparam int                        MMADDR_EXIT           = 32'h2000_0004;
++    localparam int                        MMADDR_EXIT           = 32'h0080_00c4;
+     localparam int                        MMADDR_SIGBEGIN       = 32'h2000_0008;
+     localparam int                        MMADDR_SIGEND         = 32'h2000_000C;
+     localparam int                        MMADDR_SIGDUMP        = 32'h2000_0010;

@@ -1,0 +1,5 @@
+name: pg_minimal
+uvm_test: uvmt_$(CV_CORE_LC)_firmware_test_c
+description: >
+    Minimal bare-metal test: writes a char to the print peripheral then exits.
+    Used to isolate core+memory+peripheral bring-up from newlib/printf.
