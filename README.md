@@ -31,30 +31,48 @@ bring-up log.
 - **Cycle model (Milestone 1)**: `model/cv32e40x_model.py` consumes a Spike
   trace and predicts CV32E40X cycles from the user manual's documented pipeline
   timings. Validated against RTL across Embench kernels with very different
-  instruction mixes (all runs use `LOCAL_SCALE_FACTOR=1` to keep RTL simulation
-  tractable; that scales repetitions only, not the algorithm):
+  instruction mixes (`LOCAL_SCALE_FACTOR=1` keeps RTL simulation tractable; it
+  scales repetitions only, not the algorithm):
 
   | benchmark | instrs | model | RTL (ground truth) | error |
   |---|---|---|---|---|
   | `matmult-int` | 97,748 | 134,546 | 134,545 | **+0.00%** |
   | `primecount` | 2,273,871 | 3,927,267 | 3,927,224 | **+0.00%** |
   | `edn` | 49,365 | 65,190 | 65,179 | **+0.02%** |
+  | `tarfind` | 53,846 | 118,587 | 117,149 | +1.23% |
   | `md5sum` | 52,607 | 72,497 | 71,400 | +1.54% |
   | `statemate` | 1,159 | 1,639 | 1,606 | +2.05% |
   | `crc32` | 24,608 | 30,764 | 29,737 | +3.45% |
-  | `tarfind` | 53,846 | 122,437 | 117,149 | +4.51% |
 
+  Every error is an over-prediction, so the model is a consistent upper bound.
   Per-instruction costs were independently calibrated against RTL
-  (`rtl-tests/pg_mulcost`): measured `add`=1, `mul`=1, `mulh`=4 cycles, all
-  matching the manual.
+  (`rtl-tests/pg_mulcost`): measured `add`=1, `mul`=1, `mulh`=4, matching the manual.
 
-  Every error is an over-prediction, i.e. the model is a consistent upper bound.
-  `tarfind`'s outlier is fully explained: it executes 770 `div`/`rem`
-  instructions, which cost 3-35 cycles depending on the divisor, and a Spike
-  `-l` trace does not record operand values -- so the model charges the worst
-  case and says so in its output. Recovering operand values (via
-  `spike --log-commits`) is the obvious fix. `crc32`'s residual is ~1 cycle
-  across ~1024 occurrences of a single event type and is not yet pinned down.
+  `div`/`rem` cost 3..35 cycles depending on the divisor. The model recovers the
+  actual divisor by replaying `spike --log-commits` register writes and charges
+  `3 + leading_zeros(divisor)` exactly; this took `tarfind` (770 divides) from
+  +4.51% to +1.23%.
+
+### What the model is (and is not) good for
+
+It is **not** currently a speed win for a single run. On `primecount`
+(3.9M cycles): Verilator 5.7s vs Spike trace 2.1s + model 11.0s. The model's
+Python parser chewing a 115 MB text trace dominates and is the obvious thing to
+optimise.
+
+The value is elsewhere:
+
+1. **It scores hardware that does not exist yet.** RTL simulation requires RTL.
+   A candidate custom instruction or extension config can be evaluated from an
+   existing trace before anyone writes Verilog -- which is the entire point of
+   the discovery pipeline.
+2. **One trace, many candidate designs.** The instruction trace is captured
+   once; re-scoring it under different microarchitectural assumptions costs
+   seconds, whereas each RTL configuration needs a rebuild plus a full
+   re-simulation.
+3. **It explains where cycles go.** The model reports the instruction mix,
+   branch-taken counts, hazards and stalls behind its estimate, which a bare
+   cycle count from RTL does not give you.
 
 ### Why alignment matters
 

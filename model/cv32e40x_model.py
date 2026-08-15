@@ -33,11 +33,29 @@ TRACE_RE = re.compile(
 
 REG_RE = re.compile(r"\b(x\d+|zero|ra|sp|gp|tp|t[0-6]|s[0-9]|s1[01]|a[0-7]|fp)\b")
 
+# `spike --log-commits` emits, after each instruction, the architectural state it
+# wrote, e.g.
+#   core   0: 3 0x800000b4 (0x03756533) x10 0x00000000
+# Replaying these lets us reconstruct the register file, which is what makes the
+# real div/rem operand (and hence its true cycle cost) recoverable.
+COMMIT_RE = re.compile(
+    r"core\s+\d+:\s+\d+\s+0x[0-9a-fA-F]+\s+\(0x[0-9a-fA-F]+\)\s+x(\d+)\s+0x([0-9a-fA-F]+)"
+)
+
+
+def clz32(v):
+    """Leading zeros of a 32-bit value; clz(0) == 32."""
+    v &= 0xFFFFFFFF
+    if v == 0:
+        return 32
+    return 32 - v.bit_length()
+
 
 class Insn:
-    __slots__ = ("pc", "enc", "size", "mnem", "ops", "dest", "srcs")
+    __slots__ = ("pc", "enc", "size", "mnem", "ops", "dest", "srcs", "div_operand")
 
     def __init__(self, pc, enc, enc_str, mnem, ops):
+        self.div_operand = None
         self.pc = pc
         self.enc = enc
         # Spike prints RVC instructions as 4 hex digits, 32-bit as 8.
@@ -94,14 +112,32 @@ def decode_regs(mnem, ops):
 
 
 def parse_trace(path):
+    """Parse a `spike -l` trace, optionally enriched with `--log-commits`.
+
+    When commit lines are present we replay register writes so that the divisor
+    of each div/rem can be read out of the reconstructed register file. Without
+    them the model has to assume a worst-case divide, which is the single
+    largest source of over-prediction on divide-heavy code.
+    """
     insns = []
+    regs = [0] * 32
     with open(path, "r", errors="replace") as fh:
         for line in fh:
             m = TRACE_RE.match(line)
-            if not m:
-                continue  # exception lines, register dumps, etc.
-            pc_s, enc_s, mnem, ops = m.groups()
-            insns.append(Insn(int(pc_s, 16), int(enc_s, 16), enc_s, mnem, ops.strip()))
+            if m:
+                pc_s, enc_s, mnem, ops = m.groups()
+                ins = Insn(int(pc_s, 16), int(enc_s, 16), enc_s, mnem, ops.strip())
+                if base_mnem(mnem) in DIV_REM and ins.size == 4:
+                    # R-type: rs2 = enc[24:20]. Read it *before* this
+                    # instruction's own writeback is replayed.
+                    ins.div_operand = regs[(ins.enc >> 20) & 0x1F]
+                insns.append(ins)
+                continue
+            c = COMMIT_RE.match(line)
+            if c:
+                rd, val = int(c.group(1)), int(c.group(2), 16)
+                if rd:  # x0 stays zero
+                    regs[rd] = val
     return insns
 
 
@@ -144,6 +180,11 @@ class CV32E40XModel:
 
         if b in DIV_REM:
             self.notes["div_rem"] += 1
+            if ins.div_operand is not None:
+                # Manual: 3 cycles when the divisor has no leading zeros, 35 when
+                # the divisor is 0 -- i.e. 3 + clz(divisor).
+                self.notes["div_rem_exact"] += 1
+                return 3 + clz32(ins.div_operand)
             return self.div_cycles
 
         if b in MUL_HIGH:
@@ -265,10 +306,16 @@ def main():
     for k, v in sorted(model.notes.items(), key=lambda kv: -kv[1]):
         print(f"  {k:<20} {v}")
 
-    if model.notes.get("div_rem"):
-        print(f"\nNOTE: {model.notes['div_rem']} div/rem in region, each charged "
-              f"{args.div_cycles} cycles (manual range 3..35, operand-dependent). "
-              f"This is an assumption, not a measurement.")
+    n_div = model.notes.get("div_rem", 0)
+    n_exact = model.notes.get("div_rem_exact", 0)
+    if n_div and n_exact < n_div:
+        print(f"\nNOTE: {n_div - n_exact} of {n_div} div/rem had no recoverable divisor "
+              f"and were charged the worst case ({args.div_cycles} cycles; manual range "
+              f"3..35). Re-run spike with --log-commits so the model can read the "
+              f"actual operands.")
+    elif n_exact:
+        print(f"\n{n_exact} div/rem costed exactly from recovered divisors "
+              f"(3 + leading-zeros, per the manual).")
 
     if args.actual is not None:
         err = (cycles - args.actual) / args.actual * 100.0

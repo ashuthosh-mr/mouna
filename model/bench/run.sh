@@ -8,7 +8,7 @@ SPIKE=/home/kitta/sifive/riscv-isa-sim/build/spike
 SPIKE_MEM="-m0xf0000:0x310000,0x80000000:0x400000"
 SIMDIR=/home/kitta/paragato/cores/core-v-verif/cv32e40x/sim/core
 
-"$SPIKE" -l --isa=rv32imc_zicntr_zicsr_zifencei $SPIKE_MEM \
+"$SPIKE" -l --log-commits --isa=rv32imc_zicntr_zicsr_zifencei $SPIKE_MEM \
     "$HERE/${BENCH}_spike.elf" > "$HERE/${BENCH}.trace" 2>&1
 
 RTL=$(cd "$SIMDIR" && ./testbench_verilator +maxcycles=200000000 \
