@@ -303,6 +303,8 @@ def main():
                     help="cycles charged per div/rem (manual: 3..35, default worst case)")
     ap.add_argument("--actual", type=int, default=None,
                     help="measured RTL cycle count, to report model error")
+    ap.add_argument("--breakdown", action="store_true",
+                    help="report where cycles went (compute vs stalls by cause)")
     ap.add_argument("-v", "--verbose", action="store_true",
                     help="print per-instruction cycle costs")
     args = ap.parse_args()
@@ -328,18 +330,21 @@ def main():
         print(f"Model CPI    : {cycles / len(region):.3f}")
 
     # Where the cycles went: cycles = instructions (IPC=1 ideal) + stalls.
+    # Opt-in: the default output stays minimal (cycle count + error), which is
+    # all the design-space-search loop needs.
     n = len(region)
-    stall_total = sum(model.stalls.values())
-    print("\nCycle breakdown (cycles = compute + stalls):")
-    print(f"  {'compute (1/instr)':<22} {n:>10}  {100.0*n/cycles:5.1f}%")
-    for k, v in sorted(model.stalls.items(), key=lambda kv: -kv[1]):
-        if v:
-            print(f"  {'stall: ' + k:<22} {v:>10}  {100.0*v/cycles:5.1f}%")
-    print(f"  {'-- total stalls':<22} {stall_total:>10}  {100.0*stall_total/cycles:5.1f}%")
-    ideal = n
-    print(f"\n  ideal cycles (IPC=1)  {ideal}")
-    print(f"  achieved IPC          {n/cycles:.3f}   "
-          f"(headroom to IPC=1: {100.0*stall_total/cycles:.1f}% of cycles)")
+    if args.breakdown:
+        stall_total = sum(model.stalls.values())
+        print("\nCycle breakdown (cycles = compute + stalls):")
+        print(f"  {'compute (1/instr)':<22} {n:>10}  {100.0*n/cycles:5.1f}%")
+        for k, v in sorted(model.stalls.items(), key=lambda kv: -kv[1]):
+           if v:
+               print(f"  {'stall: ' + k:<22} {v:>10}  {100.0*v/cycles:5.1f}%")
+        print(f"  {'-- total stalls':<22} {stall_total:>10}  {100.0*stall_total/cycles:5.1f}%")
+        ideal = n
+        print(f"\n  ideal cycles (IPC=1)  {ideal}")
+        print(f"  achieved IPC          {n/cycles:.3f}   "
+             f"(headroom to IPC=1: {100.0*stall_total/cycles:.1f}% of cycles)")
 
     print("\nInstruction mix / events:")
     for k, v in sorted(model.notes.items(), key=lambda kv: -kv[1]):

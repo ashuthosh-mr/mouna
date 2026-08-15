@@ -129,6 +129,12 @@ This is the data a custom-instruction search needs: it says which cycles are
 actually recoverable, and therefore which candidate instructions are worth
 generating hardware for.
 
+The breakdown is opt-in (`--breakdown`); the default output is just the cycle
+count, which is all a design-space search loop needs. The stall attribution
+itself is not the expensive part -- on `primecount` (2.3M instructions) trace
+parsing takes ~10.0s versus ~3.0s for the whole model including stall
+accounting, so the text-trace parser is what to optimise if throughput matters.
+
 ### Why alignment matters
 
 Getting here required a methodological fix worth stating plainly. On CV32E40X a
