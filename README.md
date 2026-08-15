@@ -96,6 +96,36 @@ trace alone, before the bitmanip hardware was switched on.
 `B_EXT` is selected with `+define+PARAGATO_ZBA_ZBB_ZBS` at Verilator compile
 time (the stock testbench hardwired the core's defaults; see `patches/`).
 
+### Milestone 3 (in progress): finding custom-instruction candidates
+
+`model/find_candidates.py` mines a trace for straight-line sequences worth
+fusing into one custom instruction, scoring each with the same validated cycle
+model. Candidates are constrained to what CV-X-IF can actually accept: no
+control flow inside, at most `X_NUM_RS` register-file sources, one live-out
+result, and (by default) no memory ops, since offloading those needs the
+optional `xif_mem` interface.
+
+On Embench `matmult-int` (97,748 instrs / 134,546 cycles):
+
+| constraint | best candidate | execs | cycles saved |
+|---|---|---|---|
+| ALU only | `mul; addi; add` (a multiply-accumulate) | 399 | 1,197 (**0.9%**) |
+| memory allowed | `addi; add; sw` (post-increment store) | 7,999 | 15,998 (**11.9%**) |
+| memory allowed | `add; sw` (indexed store) | 8,000 | 8,000 (5.9%) |
+| memory allowed | `add; lbu` (indexed load) | 3,200 | 3,200 (2.4%) |
+
+The finder independently rediscovers what PULP put in Xpulp. ALU-only fusion is
+worth under 1% and is not worth building hardware for; the real wins are in
+**memory addressing** -- post-increment and indexed load/store, exactly
+Xpulp's `p.lw rd, imm(rs1!)`. This agrees with the stall breakdown, which
+already said arithmetic was not the bottleneck.
+
+It also exposes a limit of the interface itself: the largest single cost,
+branch/jump flush (8-25% of cycles), **cannot** be recovered through CV-X-IF at
+all. CV-X-IF offloads instructions; a zero-overhead hardware loop changes how
+the core fetches, so it has to live inside the pipeline. That is presumably why
+Xpulp implemented hardware loops in the core rather than behind an interface.
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,
