@@ -107,6 +107,13 @@ def main():
                     help="max register-file source operands, i.e. CV-X-IF X_NUM_RS (default 3)")
     ap.add_argument("--allow-mem", action="store_true",
                     help="allow loads/stores inside a candidate (needs xif_mem)")
+    ap.add_argument("--offload-latency", type=int, default=2,
+                    help="cycles a CV-X-IF offloaded instruction takes to retire. "
+                         "Measured at 2 on CV32E40X (rtl/pg_xif_mac.sv): the result "
+                         "must be registered and handed back over result_valid/ready, "
+                         "so a fused op is NOT free. Scoring fusions at 1 cycle "
+                         "over-values them and makes 2-instruction fusions look "
+                         "profitable when they are break-even.")
     ap.add_argument("--top", type=int, default=10)
     ap.add_argument("--marker", default="cycle")
     args = ap.parse_args()
@@ -148,14 +155,18 @@ def main():
 
     print(f"Region: {n} instructions, {total_cycles} cycles "
           f"(model), constraints: max_len={args.max_len} "
-          f"X_NUM_RS<={args.num_rs} mem={'yes' if args.allow_mem else 'no'}\n")
+          f"X_NUM_RS<={args.num_rs} mem={'yes' if args.allow_mem else 'no'} "
+          f"offload_latency={args.offload_latency}\n")
 
     rows = []
     for sig, cnt in cand_count.items():
         ln, nsrc, ndst = cand_example[sig]
         cyc = cand_cycles[sig]
-        # Replacing the sequence with one single-cycle custom instruction.
-        saved = cyc - cnt * 1
+        # Replacing the sequence with one custom instruction that itself costs
+        # offload_latency cycles to retire.
+        saved = cyc - cnt * args.offload_latency
+        if saved <= 0:
+            continue        # offload costs more than the sequence it replaces
         rows.append((saved, cnt, ln, nsrc, cyc, sig))
     rows.sort(reverse=True)
 

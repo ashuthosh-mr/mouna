@@ -173,6 +173,26 @@ Two CV-X-IF subtleties found by building it, both worth knowing:
    result in one cycle; the core never sees the instruction complete and the
    pipeline hangs forever.
 
+#### Corrected candidate ranking
+
+Feeding the measured offload latency back into the finder
+(`--offload-latency 2`, the default now) prunes the candidate list from 33 to
+11: every 2-instruction fusion is correctly rejected as break-even or worse.
+What survives on `matmult-int` are the longer memory-addressing sequences:
+
+| saved | %total | execs | len | pattern |
+|---|---|---|---|---|
+| 7,999 | **5.9%** | 7,999 | 3 | `addi; add; sw` -- post-increment store |
+| 6,400 | **4.8%** | 3,200 | 4 | `lbu; add; addi; sb` -- load-modify-store |
+| 3,200 | 2.4% | 3,200 | 3 | `add; addi; sb` -- indexed store |
+| 798 | 0.6% | 399 | 4 | `addi; mul; addi; add` -- multiply-accumulate |
+
+So the approach still finds real wins -- they are just the 3-4 instruction
+memory-addressing patterns, not the short arithmetic fusions, and the
+multiply-accumulate that looked best under the naive scoring drops to 0.6%.
+That is the same conclusion Xpulp reached, now derived from measurement on this
+core rather than assumed.
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,
