@@ -152,6 +152,7 @@ def main():
     # Enumerate straight-line windows.
     cand_count = Counter()
     cand_cycles = Counter()
+    cand_penalty = Counter()
     cand_example = {}
     n = len(region)
     for i in range(n):
@@ -169,6 +170,22 @@ def main():
             sig = seq_signature(seq)
             cand_count[sig] += 1
             cand_cycles[sig] += sum(cost[i:i + L])
+
+            # Scheduling risk. Fusing removes instructions, and with them the
+            # slack that was separating a load from its consumer. Whether the
+            # hazard actually appears depends on how the compiler reschedules
+            # the shorter loop, which cannot be read off the baseline trace.
+            # Measured on CV32E40P: the md5 rotate idiom took a load directly
+            # into the fused operand and cost back 1 cycle per execution, while
+            # the CRC table-index candidate did not. So this is reported as a
+            # band rather than a single number.
+            for k in range(max(0, i - 3), i):
+                prv = region[k]
+                if (M.base_mnem(prv.mnem) in M.LOADS
+                        and prv.dest is not None and prv.dest in ext):
+                    cand_penalty[sig] += 1
+                    break
+
             cand_example.setdefault(sig, (len(seq), len(ext), len(live)))
 
     print(f"Region: {n} instructions, {total_cycles} cycles "
@@ -188,10 +205,16 @@ def main():
         rows.append((saved, cnt, ln, nsrc, cyc, sig))
     rows.sort(reverse=True)
 
-    print(f"{'saved':>8} {'%tot':>6} {'execs':>7} {'len':>4} {'srcs':>5}  pattern")
+    print(f"{'saved':>8} {'worst':>8} {'%tot':>6} {'execs':>7} {'len':>4} {'srcs':>5}  pattern")
     for saved, cnt, ln, nsrc, cyc, sig in rows[:args.top]:
-        print(f"{saved:>8} {100.0*saved/total_cycles:>5.1f}% {cnt:>7} {ln:>4} "
-              f"{nsrc:>5}  {sig}")
+        worst = saved - cand_penalty[sig]
+        print(f"{saved:>8} {worst:>8} {100.0*saved/total_cycles:>5.1f}% {cnt:>7} "
+              f"{ln:>4} {nsrc:>5}  {sig}")
+    if any(cand_penalty[sig] for *_ , sig in rows[:args.top]):
+        print("\n  'worst' assumes fusing exposes a load-use hazard that the "
+              "original\n  schedule was hiding. Whether it does depends on how the "
+              "compiler\n  reschedules the shorter loop, which the baseline trace "
+              "cannot show.")
 
     if not rows:
         print("  (no candidates met the constraints)")

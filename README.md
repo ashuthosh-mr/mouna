@@ -452,6 +452,64 @@ the CV-X-IF multiply-accumulate that measured exactly zero speedup is why
 `--native` exists and why the finder charges an interface round-trip when one is
 present.
 
+### Second custom instruction: validating the method, not just the instruction
+
+The CRC result above is one data point on a benchmark and an instruction that
+were both chosen with the answer in mind. A fairer test is a *different*
+instruction shape, on an idiom taken from real Embench code, picked by the tool
+rather than by hand.
+
+`pg.rol rd, rs1, rs2` -- variable rotate-left -- came from
+`find_candidates.py` ranking the `sll; sub; srl; or` idiom top on Embench
+md5sum (4 instructions, 18.7% of cycles in a focused kernel). It reuses the
+core's existing rotate-right datapath, since `rol(x,n) == ror(x,32-n)`:
+
+| | projected | measured | error |
+|---|---|---|---|
+| baseline | 16,392 | 16,395 | **-0.02%** |
+| with `pg.rol` | 13,323 | **14,347** | **-7.1%** |
+| cycles saved | 3,069 | **2,048** | over-predicted by 1,024 |
+
+Both builds return the same result, so the instruction is correct -- but the
+projected *saving* was a third too high, and the reason is worth stating.
+
+**Fusion removed the scheduling slack that was hiding a load-use hazard.**
+In the baseline the loop reads
+
+    lw   a4,0(a4)
+    lw   a3,0(a3)
+    addi a5,a5,4        <- separates the load from its consumer
+    sll  a2,a4,a3
+
+After fusing, GCC rescheduled the shorter loop and `pg.rol` landed *immediately*
+after `lw a3`, so the hazard appeared: +1 cycle x 1024 = exactly the shortfall.
+Feeding that back, 16,392 - 3,072 + 1,024 = 14,344 against 14,347 measured
+(**-0.02%**) -- the cycle model was right all along; the *candidate scorer* was
+optimistic because it costed the sequence in isolation.
+
+`find_candidates.py` now reports a **band** rather than a single number. The
+optimistic end assumes the schedule absorbs the fusion; the pessimistic end
+assumes a hidden load-use hazard is exposed. Both measured results fall inside
+it -- CRC at the optimistic end (2,048 of 1,024..2,048), rotate at the
+pessimistic end (2,048 of 2,046..3,069). Which end applies depends on how the
+compiler reschedules the shorter loop, which a baseline trace cannot show.
+
+### How much of this is actually validated
+
+Worth being explicit, because the numbers above are not all equally strong:
+
+| claim | evidence |
+|---|---|
+| cycle model accuracy | 7 Embench kernels x 2 cores, 0.00-3.45%, always an upper bound |
+| predicting an existing extension | 3 points: Zbb (-2.7%), Xpulp single-loop (-0.10%), Xpulp matmult (+15%) |
+| discovering + adding + projecting a custom instruction | 2 points: `pg.idx` (0.00% on the saving), `pg.rol` (-33% on the saving, cause understood) |
+
+The model itself is the well-validated part. Projecting a *change* is thinner,
+and both misses so far (matmult alignment, `pg.rol` scheduling) share one root
+cause: **recompiling for a new instruction lets the compiler relay out and
+reschedule the code, and the baseline trace cannot show what it will do.** That
+is a real bound on this class of tool, not a bug to be fixed away.
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,
