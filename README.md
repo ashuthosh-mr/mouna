@@ -282,6 +282,46 @@ Two traps worth knowing when doing this:
    sha, `git checkout` is a no-op that leaves working-tree edits intact, so
    local RTL changes survive rebuilds without any intervention.
 
+### Ported to CV32E40P
+
+`model/cv32e40p_model.py` is the same model retargeted to CV32E40P. It
+subclasses the CV32E40X model and overrides only the documented timing
+differences, so the file doubles as a specification of how the two cores differ:
+
+| | CV32E40X | CV32E40P |
+|---|---|---|
+| `mulh`, `mulhsu`, `mulhu` | 4 | **5** |
+| `fence`, `fence.i` | 5 | **2** |
+| CSR access | 1 (4 for `jvt`) | **4** for `mstatus`/`mepc`/`mtvec`/`mcause`/`mcycle`/`minstret`/`mhpmcounter*`/`mcountinhibit`/`mhpmevent*`/debug CSRs, 1 otherwise |
+| `jalr` data hazard | +1, or +2 after a load | **+1** after any producer |
+
+Identical on both: integer ops, aligned load/store, `mul`, `div`/`rem`
+(3 + leading zeros of the divisor), jump, branch taken/not-taken, and the +1
+penalty for a non-word-aligned non-RVC control-flow target.
+
+Validated against CV32E40P RTL on the same seven Embench kernels:
+
+| benchmark | instrs | model | RTL (ground truth) | error |
+|---|---|---|---|---|
+| `matmult-int` | 97,748 | 134,546 | 134,547 | **-0.00%** |
+| `primecount` | 2,273,871 | 3,927,267 | 3,927,226 | **+0.00%** |
+| `edn` | 49,365 | 65,190 | 65,181 | **+0.01%** |
+| `tarfind` | 53,846 | 118,587 | 117,151 | +1.23% |
+| `md5sum` | 52,607 | 72,497 | 71,402 | +1.53% |
+| `statemate` | 1,159 | 1,639 | 1,608 | +1.93% |
+| `crc32` | 24,608 | 30,764 | 29,739 | +3.45% |
+
+The spread matches CV32E40X almost exactly (0.00%-3.45% there, 0.00%-3.45%
+here), and every error is again an over-prediction. `crc32`'s residual is the
+same on both cores, which says it is a property of the shared modelling -- not
+of either microarchitecture -- and so remains the most useful thing left to
+chase.
+
+Build/run flow for this core: `link_{rtl,spike}_40p.ld` (data pinned to matching
+addresses, kept under 1 MB for this testbench), `build_40p.sh`, `run_40p.sh`.
+Its testbench peripherals differ from CV32E40X (`0x10000000` print,
+`0x20000004` exit), handled by `report_rtl_40p.c`.
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,
