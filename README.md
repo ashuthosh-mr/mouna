@@ -494,6 +494,55 @@ it -- CRC at the optimistic end (2,048 of 1,024..2,048), rotate at the
 pessimistic end (2,048 of 2,046..3,069). Which end applies depends on how the
 compiler reschedules the shorter loop, which a baseline trace cannot show.
 
+### Third custom instruction: complete cancellation, correctly predicted
+
+`pg.sha rd, rs1, rs2 = (rs1 >>> 15) + rs2` -- fixed-shift-then-add, found by
+the finder on Embench edn's `srai; add` idiom (the shift amount, 15, is a
+compile-time constant specific to this application, which is arguably more in
+the spirit of PARISCV than a general-purpose instruction).
+
+| | projected | measured | error |
+|---|---|---|---|
+| baseline | 14,344 | 14,347 | -0.02% |
+| with `pg.sha` | 13,320 (band: 13,320..14,344) | **14,347** | **worst-case exact** |
+| cycles saved | 1,024 (band: 0..1,024) | **0** | landed at the pessimistic end |
+
+Both builds return the same result (`-13098`), so the instruction is correct --
+but the fused instruction won **nothing**. In the recompiled loop, `pg.sha`'s
+second operand is loaded on the *immediately preceding* instruction:
+
+    lw a4,0(a4)
+    lw a3,0(a3)     <- pg.sha's rs2, loaded one instruction before it
+    pg.sha ...
+
+Removing the instruction that used to separate the load from its consumer
+exposed a load-use hazard worth exactly the instruction that was saved: -1 (fusion)
++1 (new hazard) = 0. This is the same mechanism as `pg.rol`, but total rather
+than partial.
+
+The finder's own risk band called this correctly: `saved=1024, worst=0`, i.e.
+"could be anywhere from 0 to 1024 depending on how the compiler reschedules."
+Reality landed at the pessimistic end it already flagged.
+
+### Three custom instructions, one honest scoreboard
+
+| instruction | idiom | source | saving predicted | saving measured | model error* |
+|---|---|---|---|---|---|
+| `pg.idx` | `andi; slli; add` (table index) | crc32 (Embench) | 1,024..2,048 | 2,048 | 0.00% |
+| `pg.rol` | `sll; sub; srl; or` (variable rotate) | md5sum (Embench) | 2,046..3,069 | 2,048 | 0.02%** |
+| `pg.sha` | `srai; add` (fixed shift) | edn (Embench) | 0..1,024 | 0 | 0.02%** |
+
+\* error of the underlying *cycle model* on the full baseline+measured trace, not
+of the candidate-saving estimate.
+\** once the exposed load-use hazard is fed back into the cycle model by hand.
+
+Every measured saving fell inside the predicted band, and the band's width is
+informative on its own: it is wide exactly when the candidate involves an
+operand that could plausibly be reloaded right before the fused instruction.
+The model itself is right in all three cases; what varies is whether fusing a
+sequence removes scheduling slack that was hiding a hazard, which depends on
+how the compiler reschedules code it has not seen yet.
+
 ### How much of this is actually validated
 
 Worth being explicit, because the numbers above are not all equally strong:
@@ -502,7 +551,7 @@ Worth being explicit, because the numbers above are not all equally strong:
 |---|---|
 | cycle model accuracy | 7 Embench kernels x 2 cores, 0.00-3.45%, always an upper bound |
 | predicting an existing extension | 3 points: Zbb (-2.7%), Xpulp single-loop (-0.10%), Xpulp matmult (+15%) |
-| discovering + adding + projecting a custom instruction | 2 points: `pg.idx` (0.00% on the saving), `pg.rol` (-33% on the saving, cause understood) |
+| discovering + adding + projecting a custom instruction | 3 points, all inside their predicted band: `pg.idx` (exact), `pg.rol` (pessimistic end), `pg.sha` (pessimistic end, 100% cancelled) |
 
 The model itself is the well-validated part. Projecting a *change* is thinner,
 and both misses so far (matmult alignment, `pg.rol` scheduling) share one root
