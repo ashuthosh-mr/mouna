@@ -24,11 +24,18 @@ import importlib.util
 import os
 from collections import Counter, defaultdict
 
-_spec = importlib.util.spec_from_file_location(
-    "cv32e40x_model", os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                   "cv32e40x_model.py"))
-M = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(M)
+_here = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, os.path.join(_here, path))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+M = _load("cv32e40x_model", "cv32e40x_model.py")
+_P = _load("cv32e40p_model", "cv32e40p_model.py")
 
 
 def is_control(ins):
@@ -107,6 +114,14 @@ def main():
                     help="max register-file source operands, i.e. CV-X-IF X_NUM_RS (default 3)")
     ap.add_argument("--allow-mem", action="store_true",
                     help="allow loads/stores inside a candidate (needs xif_mem)")
+    ap.add_argument("--core", choices=("40x", "40p"), default="40x",
+                    help="which core's timing model to score with (default 40x)")
+    ap.add_argument("--native", action="store_true",
+                    help="the instruction is added by a decoder edit rather than "
+                         "offloaded over CV-X-IF, so it retires in 1 cycle with no "
+                         "interface round-trip. Measured on CV32E40P: pg.add3 and "
+                         "p.mac both cost exactly 1 cycle, same as add. Implies "
+                         "--offload-latency 1.")
     ap.add_argument("--offload-latency", type=int, default=2,
                     help="cycles a CV-X-IF offloaded instruction takes to retire. "
                          "Measured at 2 on CV32E40X (rtl/pg_xif_mac.sv): the result "
@@ -118,12 +133,15 @@ def main():
     ap.add_argument("--marker", default="cycle")
     args = ap.parse_args()
 
+    if args.native:
+        args.offload_latency = 1
+
     insns = M.parse_trace(args.trace)
     region, _, _ = M.slice_region(insns, args.marker)
 
     # Cost each instruction in isolation so a candidate's saving can be scored
     # with the validated model rather than guessed.
-    model = M.CV32E40XModel()
+    model = _P.CV32E40PModel() if args.core == "40p" else M.CV32E40XModel()
     cost = []
     for i, ins in enumerate(region):
         nxt = region[i + 1] if i + 1 < len(region) else None

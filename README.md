@@ -399,6 +399,59 @@ therefore means modelling the compiler's response to it, not just the hardware's
 The predictor handles both shapes explicitly, and that is why it works, but it is
 a real caveat on any claim to predict arbitrary ISA changes.
 
+## Milestone 3 complete: discover, add, model and project a custom instruction
+
+The full loop, end to end, on CV32E40P:
+
+**1. Discover.** `model/find_candidates.py --core 40p --native` mines a baseline
+Spike trace. On a table-driven CRC32 the top candidate is the table-address
+sequence `andi; slli; add`, executed 1,024 times and worth 2,048 cycles (15.4%).
+`--native` matters: an instruction added by editing the core retires in 1 cycle,
+unlike a CV-X-IF offload which costs 2 and makes short fusions worthless.
+
+**2. Add.** `pg.idx rd, rs1, rs2  ->  rd = rs2 + ((rs1 & 0xff) << 2)`, a real
+custom instruction with its own ALU datapath
+(`patches/cv32e40p-pg-custom-instructions.patch`):
+
+  * `ALU_PGIDX` added to `alu_opcode_e` (a free encoding, `7'b0001110`)
+  * one line of datapath in `cv32e40p_alu.sv`
+  * one decoder arm at opcode `7'h7b`, `funct3=111`
+
+Emitted from C with `.insn` -- no toolchain change, no intrinsics.
+
+**3. Model and project.** Spike cannot execute `pg.idx` any more than it can
+execute Xpulp, so the projection is made from the *baseline* trace: the model
+costs the baseline, the finder scores the fusion, and the new performance is the
+difference.
+
+**4. Verify against RTL.**
+
+| | projected | measured | error |
+|---|---|---|---|
+| baseline | 13,323 | 13,326 | **-0.02%** |
+| with `pg.idx` | **11,275** | **11,278** | **-0.03%** |
+| cycles saved | 2,048 | 2,048 | **0.00%** |
+
+Both builds return the same CRC (`2083658589`), so the instruction is
+functionally correct, and the projected saving was exact.
+
+### Why this closes the loop
+
+The three milestones now chain into one workflow that needs no hardware to exist
+before it can answer "is this worth building?":
+
+1. **Model** a core from its manual, validated to 0.00-3.45% on Embench across
+   two different cores.
+2. **Predict** the benefit of a change before building it -- Zbb on CV32E40X
+   (-2.7%), Xpulp on CV32E40P (-0.10%).
+3. **Discover** a custom instruction from a trace, project its benefit, add it
+   to the core, and confirm (0.00% on the saving).
+
+The negative results along the way are what make the positive one trustworthy:
+the CV-X-IF multiply-accumulate that measured exactly zero speedup is why
+`--native` exists and why the finder charges an interface round-trip when one is
+present.
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,

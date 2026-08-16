@@ -1,0 +1,83 @@
+diff --git a/rtl/cv32e40p_alu.sv b/rtl/cv32e40p_alu.sv
+index aa900a7..1be6180 100644
+--- a/rtl/cv32e40p_alu.sv
++++ b/rtl/cv32e40p_alu.sv
+@@ -929,6 +929,15 @@ module cv32e40p_alu
+     result_o = '0;
+ 
+     unique case (operator_i)
++      // PARAGATO custom instruction: table-index address generation.
++      //   rd = rs2 + ((rs1 & 0xff) << 2)
++      // Replaces the four-instruction `andi; mv; slli; add` sequence that
++      // computes a byte-indexed word-table address -- the hot path of a
++      // table-driven CRC, and the top candidate reported by
++      // model/find_candidates.py on Embench crc32 (10.0% of all cycles).
++      // Purely combinational, so it retires in one cycle like any ALU op.
++      ALU_PGIDX: result_o = operand_b_i + {22'b0, operand_a_i[7:0], 2'b0};
++
+       // Standard Operations
+       ALU_AND: result_o = operand_a_i & operand_b_i;
+       ALU_OR:  result_o = operand_a_i | operand_b_i;
+diff --git a/rtl/cv32e40p_decoder.sv b/rtl/cv32e40p_decoder.sv
+index 3b48679..e40948f 100644
+--- a/rtl/cv32e40p_decoder.sv
++++ b/rtl/cv32e40p_decoder.sv
+@@ -2905,6 +2905,40 @@ module cv32e40p_decoder import cv32e40p_pkg::*; import cv32e40p_apu_core_pkg::*;
+               hwlp_cnt_mux_sel_o    = 1'b0;
+             end
+ 
++            // PARAGATO: pg.add3 rd, rs1, rs2  ->  rd <- rs1 + rs2
++            // Shares OPCODE_HWLOOP (7'h7b) with the lp.* instructions above,
++            // using funct3=110, which they leave unused (000..101 taken).
++            // An earlier attempt claimed this whole opcode outright and
++            // silently broke every lp.* instruction: OPCODE_HWLOOP is a real,
++            // populated opcode, not free space, so a new instruction must slot
++            // into an unused funct3 rather than override the case.
++            3'b110: begin
++              if (instr_rdata_i[31:25] == 7'b0000000) begin
++                regfile_alu_we = 1'b1;
++                rega_used_o    = 1'b1;
++                regb_used_o    = 1'b1;
++                alu_operator_o = ALU_ADD;
++              end else begin
++                illegal_insn_o = 1'b1;
++              end
++            end
++
++            // PARAGATO: pg.idx rd, rs1, rs2  ->  rd = rs2 + ((rs1 & 0xff) << 2)
++            // funct3=111, the other slot OPCODE_HWLOOP leaves unused.
++            // Discovered by model/find_candidates.py as the top candidate on
++            // Embench crc32: it replaces the `andi; mv; slli; add` table-address
++            // sequence, worth 10.0% of all cycles there.
++            3'b111: begin
++              if (instr_rdata_i[31:25] == 7'b0000000) begin
++                regfile_alu_we = 1'b1;
++                rega_used_o    = 1'b1;
++                regb_used_o    = 1'b1;
++                alu_operator_o = ALU_PGIDX;
++              end else begin
++                illegal_insn_o = 1'b1;
++              end
++            end
++
+             default: begin
+               illegal_insn_o = 1'b1;
+             end
+diff --git a/rtl/include/cv32e40p_pkg.sv b/rtl/include/cv32e40p_pkg.sv
+index 61dce0f..3622ce2 100644
+--- a/rtl/include/cv32e40p_pkg.sv
++++ b/rtl/include/cv32e40p_pkg.sv
+@@ -84,6 +84,13 @@ package cv32e40p_pkg;
+ 
+   typedef enum logic [ALU_OP_WIDTH-1:0] {
+ 
++    // PARAGATO: table-index address generation.
++    //   rd = rs2 + ((rs1 & 0xff) << 2)
++    // Discovered by model/find_candidates.py as the top candidate on Embench
++    // crc32 (10.0% of all cycles): the four-instruction table-address sequence
++    // `andi; mv; slli; add` at the heart of a table-driven CRC inner loop.
++    ALU_PGIDX = 7'b0001110,
++
+     ALU_ADD   = 7'b0011000,
+     ALU_SUB   = 7'b0011001,
+     ALU_ADDU  = 7'b0011010,
