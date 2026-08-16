@@ -94,6 +94,19 @@ NO_DEST = BRANCHES | STORES | {"j", "jr", "ret", "fence", "fence.i", "nop",
                                "csrw", "csrs", "csrc", "csrwi", "csrsi", "csrci"}
 
 
+# RVC arithmetic/logical instructions are printed in two-operand form, e.g.
+#   c.addi a5, 4      meaning  a5 = a5 + 4
+#   c.add  a4, a5     meaning  a4 = a4 + a5
+# so the destination is also an *implicit source*. Missing that loses real RAW
+# dependencies and therefore real hazard stalls. c.mv / c.li / c.lui and the
+# compressed loads overwrite their destination instead, so they are excluded.
+RVC_READ_MODIFY_WRITE = {
+    "add", "addi", "sub", "and", "andi", "or", "xor",
+    "slli", "srli", "srai", "addw", "subw", "addiw",
+    "addi16sp",
+}
+
+
 def decode_regs(mnem, ops):
     """Return (dest_reg, [src_regs]) parsed from the disassembly text.
 
@@ -107,8 +120,12 @@ def decode_regs(mnem, ops):
 
     if b in NO_DEST:
         return None, regs
-    # Everything else writes its first operand and reads the remainder.
-    return regs[0], regs[1:]
+
+    dest, srcs = regs[0], regs[1:]
+    # Restore the implicit source operand of a compressed read-modify-write.
+    if mnem.startswith("c.") and b in RVC_READ_MODIFY_WRITE and dest not in srcs:
+        srcs = [dest] + srcs
+    return dest, srcs
 
 
 def parse_trace(path):

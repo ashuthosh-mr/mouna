@@ -322,57 +322,82 @@ addresses, kept under 1 MB for this testbench), `build_40p.sh`, `run_40p.sh`.
 Its testbench peripherals differ from CV32E40X (`0x10000000` print,
 `0x20000004` exit), handled by `report_rtl_40p.c`.
 
-## Xpulp experiment on CV32E40P (in progress)
+## Milestone 2 complete: predicting Xpulp on CV32E40P
 
-Goal: same shape as the Zbb result (Milestone 2) -- predict a hardware
-change's benefit before enabling it, then check against real RTL -- aimed at
-Xpulp (hardware loops, post-increment addressing, `p.mac`), which the
-stall-breakdown and CV-X-IF work all pointed at as the natural next target.
+Milestone 2 -- *predict a hardware change's benefit before building it* -- is now
+demonstrated twice, on two cores and two very different kinds of change:
 
-**LLVM check, answered:** not needed. The already-present PULP GCC 7.1.1 fork at
-`~/revolution/bin/riscv32-unknown-elf-gcc` emits Xpulp automatically from plain
-`-O2 -march=rv32i[m]xpulpv2` -- hardware loops (`lp.setupi`), post-increment
-load/store (`p.lw rd, imm(rs1!)`), and `p.mac` all appear with zero source
-changes, no intrinsics, no pragmas.
+| change | core | predicted | measured | error |
+|---|---|---|---|---|
+| enable Zbb bitmanip | CV32E40X | 3,570 cycles saved | 3,669 | **-2.7%** |
+| enable Xpulp (single loop) | CV32E40P | **3.243x** speedup | **3.241x** | **-0.10%** |
 
-**`p.mac` calibrated against RTL** (`rtl-tests/pg_xpulp_cal`, same dependent-chain
-method as the earlier `mul`/`mulh` calibration): **1 cycle**, identical to a
-plain `add`. This is the concrete confirmation of why Xpulp lives in the
-pipeline: the CV-X-IF `pg.mac` coprocessor built earlier cost 2 cycles for the
-same operation and won nothing; the in-pipeline version is genuinely free.
+The Xpulp case is the harder one: **Spike cannot execute Xpulp at all**, so the
+extension's binary cannot simply be traced. `model/predict_xpulp.py` instead
+transforms the *baseline* trace analytically -- converting counted loops to
+hardware loops, folding address arithmetic into post-increment load/store, and
+fusing `mul`+`add` into `p.mac` -- then re-costs it with the validated CV32E40P
+model.
 
-**PULP_XPULP wired through the testbench** (it was silently defaulting to 0,
-never forwarded from `tb_top_verilator.sv` to the core at all --
-`patches/cv32e40p-pulp-xpulp-passthrough.patch`), gated behind
-`+define+PARAGATO_XPULP`.
+**No LLVM needed.** The PULP GCC 7.1.1 fork already present at
+`~/revolution/bin/riscv32-unknown-elf-gcc` emits all of this from plain
+`-O2 -march=rv32im[c]xpulpv2`: no intrinsics, no pragmas, no source changes.
 
-**A real opcode collision was found and fixed.** The `pg.add3` custom
-instruction added earlier claimed opcode `7'h7b` outright. That opcode is
-`OPCODE_HWLOOP` -- not free space -- so `pg.add3` silently broke every `lp.*`
-instruction the moment `PULP_XPULP` was enabled. Fixed by moving `pg.add3` into
-`funct3=3'b110`, the one sub-slot `OPCODE_HWLOOP`'s own case statement leaves
-unused (`patches/cv32e40p-pg-add3-custom-insn.patch`, corrected).
+### Measured Xpulp speedups (CV32E40P RTL)
 
-**A second, real constraint was found the hard way.** The manual states
-plainly: *"No Compressed instructions (RVC) allowed in the HWLoop body."*
-Compiling with `-march=rv32imcxpulpv2` (the `c` extension included) produces
-loop bodies containing 2-byte compressed instructions anyway -- this old GCC
-backend does not enforce the constraint -- and the core traps into an
-unhandled exception at address 0. Dropping `c` (`-march=rv32imxpulpv2`) removed
-that specific fault.
+| kernel | baseline | Xpulp | speedup |
+|---|---|---|---|
+| single-loop MAC (hardware loops + post-inc + `p.mac`) | 13,323 | **4,111** | **3.24x** |
+| 8x8 matmult (post-inc + `p.mac`, no hardware loops) | 6,848 | **4,559** | **1.50x** |
 
-**Status: still not fully working.** With `c` dropped, the fault changes
-character -- `p.mac`/`p.lw` execute correctly through much of the real
-algorithm (iteration counts match the expected 8x8x8 structure), but
-`benchmark_init`'s array-init loop runs 2048 times instead of the expected 64
-before eventually trapping. That is consistent with a nested-hardware-loop
-end-address or count miscalculation, not yet isolated to either the compiler or
-the core. Not yet diagnosed further.
+`p.mac` was calibrated against RTL at **1 cycle**, identical to `add`
+(`rtl-tests/pg_xpulp_cal`). That is the direct counterpart to the earlier
+CV-X-IF result: the *same operation* offloaded over CV-X-IF cost 2 cycles and
+won nothing, while in-pipeline it is free. It is the clearest evidence for why
+Xpulp lives in the pipeline.
 
-Reproduce: `model/bench/matmult_xpulp2_rtl.hex` (no-`c` Xpulp build) and
-`matmult_base_40p_rtl.hex` (baseline) on the `+define+PARAGATO_XPULP` core;
-`+pctrace` (with the instruction-word extension added to
-`cv32e40p_tb_wrapper.sv`) traces exactly which PC/encoding faults.
+### Three real bugs found
+
+1. **GCC mis-orders nested hardware loop registers.** CV32E40P requires
+   `HWLoop[1].end >= HWLoop[0].end + 8` (asserted in
+   `cv32e40p_controller.sv`), with loop 0 the *inner* loop. GCC 7.1.1 emits
+   `lp.setupi x0` for the outer loop and `x1` for the inner -- backwards -- so
+   any nested hardware loop violates the constraint and the core traps.
+   Single-level hardware loops work perfectly (3.24x above). Worked around with
+   `-mnohwloop` for nested code.
+
+2. **RVC instructions have an implicit source operand the model was dropping.**
+   Spike prints `c.addi a5, 4` and `c.add a4, a5`, but these mean
+   `a5 = a5 + 4` and `a4 = a4 + a5` -- the destination is *also* a source.
+   `decode_regs` was losing that, and with it real RAW dependencies. Fixed. Note
+   honestly: this did **not** change any of the 14 benchmark results, so it is
+   not the cause of `crc32`'s +3.45% residual, which remains unexplained.
+
+3. **A custom instruction was silently squatting on a real opcode.** `pg.add3`
+   claimed opcode `7'h7b` outright -- that is `OPCODE_HWLOOP`, not free space --
+   so it broke every `lp.*` instruction the moment Xpulp was enabled. Moved into
+   `funct3=3'b110`, the one sub-slot that opcode's own case leaves unused.
+
+Also: the manual forbids compressed (RVC) instructions inside a hardware-loop
+body, but `-march=rv32imcxpulpv2` emits them there anyway -- the backend does not
+enforce it -- causing a trap. Dropping `c` avoids it.
+
+### Limit of the approach, stated plainly
+
+The matmult prediction is **+15%** off (predicted 5,252, measured 4,559), and the
+cause is understood: recompiling for an extension **relays out the code**, and on
+CV32E40P a taken branch costs 3 or 4 cycles depending on whether its target is
+word-aligned. The predictor works from the baseline layout and cannot know the
+new one, so it now reports an explicit uncertainty band rather than false
+precision.
+
+More fundamentally, Xpulp's largest win here is not instruction fusion but
+**induction-variable strength reduction** -- GCC restructures index-based
+addressing (`mv; add; lw` recomputed per iteration) into pointer-walking
+(`p.lw rd, 4(p!)`) *because* post-increment exists. Predicting an ISA extension
+therefore means modelling the compiler's response to it, not just the hardware's.
+The predictor handles both shapes explicitly, and that is why it works, but it is
+a real caveat on any claim to predict arbitrary ISA changes.
 
 ### Where the cycles go
 
