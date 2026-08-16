@@ -1,0 +1,19 @@
+diff --git a/cv32e40p/tb/core/cv32e40p_tb_wrapper.sv b/cv32e40p/tb/core/cv32e40p_tb_wrapper.sv
+index 634d992..5eacca7 100644
+--- a/cv32e40p/tb/core/cv32e40p_tb_wrapper.sv
++++ b/cv32e40p/tb/core/cv32e40p_tb_wrapper.sv
+@@ -179,4 +179,14 @@ module cv32e40p_tb_wrapper
+          .exit_valid_o   ( exit_valid_o                              ),
+          .exit_value_o   ( exit_value_o                              ));
+ 
++    // PARAGATO debug aid: dump ID-stage PC and illegal-instruction flag every
++    // cycle when +pctrace is given.
++    always_ff @(posedge clk_i) begin: paragato_pctrace
++        if ($test$plusargs("pctrace"))
++            $display("PC=0x%08x illegal=%0d instr=0x%08x",
++                     cv32e40p_core_i.pc_id,
++                     cv32e40p_core_i.id_stage_i.illegal_insn_dec,
++                     cv32e40p_core_i.id_stage_i.instr);
++    end
++
+ endmodule // cv32e40p_tb_wrapper

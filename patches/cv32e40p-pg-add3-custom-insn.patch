@@ -1,30 +1,29 @@
 diff --git a/rtl/cv32e40p_decoder.sv b/rtl/cv32e40p_decoder.sv
-index 3b48679..9dc6093 100644
+index 3b48679..5a563a6 100644
 --- a/rtl/cv32e40p_decoder.sv
 +++ b/rtl/cv32e40p_decoder.sv
-@@ -1934,6 +1934,25 @@ module cv32e40p_decoder import cv32e40p_pkg::*; import cv32e40p_apu_core_pkg::*;
-           illegal_insn_o = 1'b1;
-       end
+@@ -2905,6 +2905,24 @@ module cv32e40p_decoder import cv32e40p_pkg::*; import cv32e40p_apu_core_pkg::*;
+               hwlp_cnt_mux_sel_o    = 1'b0;
+             end
  
-+      // PARAGATO: minimal custom instruction, proving a new instruction can be
-+      // added to this core by a decoder change alone -- no extension interface,
-+      // so none of CV-X-IF's limits (offload latency, single writeback, no
-+      // control transfers) apply.
-+      //     pg.add3 rd, rs1, rs2    rd <- rs1 + rs2
-+      // R-type, opcode 7'h7b (RISC-V custom-3), funct3 = 000, funct7 = 0000000.
-+      // 7'h7b is unused by this core revision (Xpulp uses 7'h5b and 7'h57).
-+      7'h7b: begin
-+        if (instr_rdata_i[14:12] == 3'b000 && instr_rdata_i[31:25] == 7'b0000000) begin
-+          regfile_alu_we = 1'b1;
-+          rega_used_o    = 1'b1;
-+          regb_used_o    = 1'b1;
-+          alu_operator_o = ALU_ADD;
-+          illegal_insn_o = 1'b0;
-+        end else begin
-+          illegal_insn_o = 1'b1;
-+        end
-+      end
++            // PARAGATO: pg.add3 rd, rs1, rs2  ->  rd <- rs1 + rs2
++            // Shares OPCODE_HWLOOP (7'h7b) with the lp.* instructions above,
++            // using funct3=110, which they leave unused (000..101 taken).
++            // An earlier attempt claimed this whole opcode outright and
++            // silently broke every lp.* instruction: OPCODE_HWLOOP is a real,
++            // populated opcode, not free space, so a new instruction must slot
++            // into an unused funct3 rather than override the case.
++            3'b110: begin
++              if (instr_rdata_i[31:25] == 7'b0000000) begin
++                regfile_alu_we = 1'b1;
++                rega_used_o    = 1'b1;
++                regb_used_o    = 1'b1;
++                alu_operator_o = ALU_ADD;
++              end else begin
++                illegal_insn_o = 1'b1;
++              end
++            end
 +
-       OPCODE_PULP_OP: begin  // PULP specific ALU instructions with three source operands
-         if (PULP_XPULP) begin
-           regfile_alu_we = 1'b1;
+             default: begin
+               illegal_insn_o = 1'b1;
+             end

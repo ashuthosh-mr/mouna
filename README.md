@@ -322,6 +322,58 @@ addresses, kept under 1 MB for this testbench), `build_40p.sh`, `run_40p.sh`.
 Its testbench peripherals differ from CV32E40X (`0x10000000` print,
 `0x20000004` exit), handled by `report_rtl_40p.c`.
 
+## Xpulp experiment on CV32E40P (in progress)
+
+Goal: same shape as the Zbb result (Milestone 2) -- predict a hardware
+change's benefit before enabling it, then check against real RTL -- aimed at
+Xpulp (hardware loops, post-increment addressing, `p.mac`), which the
+stall-breakdown and CV-X-IF work all pointed at as the natural next target.
+
+**LLVM check, answered:** not needed. The already-present PULP GCC 7.1.1 fork at
+`~/revolution/bin/riscv32-unknown-elf-gcc` emits Xpulp automatically from plain
+`-O2 -march=rv32i[m]xpulpv2` -- hardware loops (`lp.setupi`), post-increment
+load/store (`p.lw rd, imm(rs1!)`), and `p.mac` all appear with zero source
+changes, no intrinsics, no pragmas.
+
+**`p.mac` calibrated against RTL** (`rtl-tests/pg_xpulp_cal`, same dependent-chain
+method as the earlier `mul`/`mulh` calibration): **1 cycle**, identical to a
+plain `add`. This is the concrete confirmation of why Xpulp lives in the
+pipeline: the CV-X-IF `pg.mac` coprocessor built earlier cost 2 cycles for the
+same operation and won nothing; the in-pipeline version is genuinely free.
+
+**PULP_XPULP wired through the testbench** (it was silently defaulting to 0,
+never forwarded from `tb_top_verilator.sv` to the core at all --
+`patches/cv32e40p-pulp-xpulp-passthrough.patch`), gated behind
+`+define+PARAGATO_XPULP`.
+
+**A real opcode collision was found and fixed.** The `pg.add3` custom
+instruction added earlier claimed opcode `7'h7b` outright. That opcode is
+`OPCODE_HWLOOP` -- not free space -- so `pg.add3` silently broke every `lp.*`
+instruction the moment `PULP_XPULP` was enabled. Fixed by moving `pg.add3` into
+`funct3=3'b110`, the one sub-slot `OPCODE_HWLOOP`'s own case statement leaves
+unused (`patches/cv32e40p-pg-add3-custom-insn.patch`, corrected).
+
+**A second, real constraint was found the hard way.** The manual states
+plainly: *"No Compressed instructions (RVC) allowed in the HWLoop body."*
+Compiling with `-march=rv32imcxpulpv2` (the `c` extension included) produces
+loop bodies containing 2-byte compressed instructions anyway -- this old GCC
+backend does not enforce the constraint -- and the core traps into an
+unhandled exception at address 0. Dropping `c` (`-march=rv32imxpulpv2`) removed
+that specific fault.
+
+**Status: still not fully working.** With `c` dropped, the fault changes
+character -- `p.mac`/`p.lw` execute correctly through much of the real
+algorithm (iteration counts match the expected 8x8x8 structure), but
+`benchmark_init`'s array-init loop runs 2048 times instead of the expected 64
+before eventually trapping. That is consistent with a nested-hardware-loop
+end-address or count miscalculation, not yet isolated to either the compiler or
+the core. Not yet diagnosed further.
+
+Reproduce: `model/bench/matmult_xpulp2_rtl.hex` (no-`c` Xpulp build) and
+`matmult_base_40p_rtl.hex` (baseline) on the `+define+PARAGATO_XPULP` core;
+`+pctrace` (with the instruction-word extension added to
+`cv32e40p_tb_wrapper.sv`) traces exactly which PC/encoding faults.
+
 ### Where the cycles go
 
 The model reports not just a cycle count but *why* those cycles were spent,
