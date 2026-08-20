@@ -58,8 +58,26 @@ class Insn:
         self.div_operand = None
         self.pc = pc
         self.enc = enc
-        # Spike prints RVC instructions as 4 hex digits, 32-bit as 8.
-        self.size = 2 if len(enc_str) <= 4 else 4
+        # Instruction length from the encoding's own low 2 bits: RISC-V
+        # guarantees bits[1:0] != 11 means a 16-bit (RVC) instruction, and
+        # since we never see anything wider than 32-bit here, bits[1:0]==11
+        # always means 32-bit. This is architecturally exact.
+        #
+        # An earlier version inferred size from the *printed hex string
+        # length* (4 digits vs 8), which broke silently: some `spike -l`
+        # invocations zero-pad RVC encodings to 8 digits too, e.g.
+        # "(0x00001141) c.addi sp, -16" is genuinely 2 bytes despite 8 printed
+        # digits. Every trace in this project used that padding, so every
+        # RVC instruction was mis-sized as 4 bytes for the entire session.
+        # This was dormant almost everywhere (most hot-loop branch targets
+        # happened to be either non-RVC or word-aligned, where the bug's
+        # effect is zero), but it is the actual explanation for crc32's
+        # previously "unexplained" +3.45% residual: its hot loop's branch
+        # target is a compressed instruction at a non-word-aligned address,
+        # which should cost no alignment penalty (the manual's +1 rule is
+        # for non-word-aligned *non-RVC* targets only) but was incorrectly
+        # charged one every single iteration.
+        self.size = 2 if (self.enc & 0b11) != 0b11 else 4
         self.mnem = mnem
         self.ops = ops
         self.dest, self.srcs = decode_regs(mnem, ops)

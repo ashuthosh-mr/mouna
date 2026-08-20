@@ -26,16 +26,16 @@ comparison, and a chronological bring-up log.
 | Spike ISS | working -- compiles, runs, traces C programs |
 | CV32E40X + Verilator | working (after fixing a real testbench bug, see below) |
 | CV32E40P + Verilator | working |
-| Cycle model | validated on both cores, 14 points, 0.00-3.45%, always an over-prediction |
+| Cycle model | validated on both cores, 14 points, **worst case 0.25%**, typically under 0.01% |
 | Predict a hardware change before building it | validated 3x: Zbb (-2.7%), Xpulp single-loop (-0.10%), Xpulp matmult (+15%, cause understood) |
-| Discover + add + project a custom instruction | validated 3x on CV32E40P, all inside their predicted band |
+| Discover + add + project a custom instruction | validated 4x on CV32E40P, all inside their predicted band |
 | CV-X-IF custom instruction | works, but measured **zero** speedup -- the most useful negative result in this project |
 
-Three real bugs found in upstream `core-v-verif`/toolchain along the way (listed
-in full further down): a testbench wiring bug that made every CV32E40X
-store/load silently carry `0x0`, a GCC bug that mis-orders nested hardware-loop
-registers on CV32E40P, and a missing implicit-source-operand fix in this
-project's own RVC decoding.
+Real bugs found along the way, listed in full further down: a `core-v-verif`
+testbench wiring bug that made every CV32E40X store/load silently carry `0x0`;
+a GCC bug that mis-orders nested hardware-loop registers on CV32E40P; and two
+bugs in this project's own trace decoding -- one of which had been quietly
+inflating a single benchmark's error by 3.45% since the beginning.
 
 ## Repo layout
 
@@ -112,21 +112,58 @@ not the algorithm). Both cores' builds are constructed to have byte-identical
 
 | benchmark | instrs | CV32E40X model | CV32E40X RTL | error | CV32E40P model | CV32E40P RTL | error |
 |---|---|---|---|---|---|---|---|
-| `matmult-int` | 97,748 | 134,546 | 134,545 | +0.00% | 134,546 | 134,547 | -0.00% |
-| `primecount` | 2,273,871 | 3,927,267 | 3,927,224 | +0.00% | 3,927,267 | 3,927,226 | +0.00% |
-| `edn` | 49,365 | 65,190 | 65,179 | +0.02% | 65,190 | 65,181 | +0.01% |
-| `tarfind` | 53,846 | 118,587 | 117,149 | +1.23% | 118,587 | 117,151 | +1.23% |
-| `md5sum` | 52,607 | 72,497 | 71,400 | +1.54% | 72,497 | 71,402 | +1.53% |
-| `statemate` | 1,159 | 1,639 | 1,606 | +2.05% | 1,639 | 1,608 | +1.93% |
-| `crc32` | 24,608 | 30,764 | 29,737 | +3.45% | 30,764 | 29,739 | +3.45% |
+| `matmult-int` | 97,748 | 134,543 | 134,545 | -0.00% | 134,543 | 134,547 | -0.00% |
+| `primecount` | 2,273,871 | 3,927,222 | 3,927,224 | -0.00% | 3,927,222 | 3,927,226 | -0.00% |
+| `edn` | 49,365 | 65,177 | 65,179 | -0.00% | 65,177 | 65,181 | -0.01% |
+| `tarfind` | 53,846 | 117,147 | 117,149 | -0.00% | 117,147 | 117,151 | -0.00% |
+| `md5sum` | 52,607 | 71,398 | 71,400 | -0.00% | 71,398 | 71,402 | -0.01% |
+| `statemate` | 1,159 | 1,604 | 1,606 | -0.12% | 1,604 | 1,608 | -0.25% |
+| `crc32` | 24,608 | 29,735 | 29,737 | -0.01% | 29,735 | 29,739 | -0.01% |
 
-Every error is an over-prediction, on both cores, so the model is a consistent
-upper bound. The spread is nearly identical between the two cores, and
-`crc32`'s residual is *exactly* the same on both -- which localises it to the
-shared trace-parsing/hazard logic rather than to either microarchitecture. It
-remains unexplained and is the most useful thing left to chase on the model
-itself (one hypothesis -- a missing implicit-source-operand fix in RVC decode,
-see below -- was tested and ruled out: it changed none of these 14 results).
+**Worst case 0.25%, typical under 0.01%.** The residual is now a small constant
+few-cycle under-prediction (the boundary effect of the two `rdcycle`
+instructions bracketing the measured region), not a systematic modelling error.
+
+#### The bug that was hiding behind `crc32`
+
+For most of this project `crc32` sat at **+3.45%** on *both* cores while
+everything else was under 2%, and the fact that it was identical across two
+different microarchitectures said the cause was in shared logic rather than in
+either pipeline. It was, and it turned out to be a one-line bug with a long
+reach.
+
+`Insn.size` inferred instruction length from the *printed width of the hex
+encoding* in the Spike trace -- 4 digits meaning 16-bit RVC, 8 meaning 32-bit.
+But `spike -l` zero-pads RVC encodings to 8 digits as well:
+
+    core   0: 0x80000008 (0x00001141) c.addi  sp, -16     <- 2 bytes, 8 digits
+
+So **every compressed instruction in every trace was mis-sized as 4 bytes**,
+for the entire project. It stayed dormant almost everywhere, because size only
+feeds the branch-target alignment rule (a taken branch costs +1 cycle when its
+target is a non-word-aligned **non-RVC** instruction). Wherever a hot branch
+target was either word-aligned or genuinely 32-bit, the bug had no effect.
+`crc32`'s hot loop happens to branch to a *compressed* instruction at a
+non-word-aligned address -- which should cost nothing -- and was charged +1
+cycle on all 1,023 iterations.
+
+Now derived from the encoding's own low 2 bits, which RISC-V defines exactly
+(`bits[1:0] != 11` means RVC):
+
+| | before | after |
+|---|---|---|
+| `crc32` | +3.45% | **-0.01%** |
+| worst case across 14 points | +3.45% | **0.25%** |
+
+Two things worth drawing out. First, an earlier hypothesis for this residual
+(RVC instructions having an implicit source operand the decoder dropped) was
+tested and **ruled out** -- it was a real bug, and fixing it was correct, but it
+changed none of the 14 results. Chasing the wrong cause first is the normal
+shape of this kind of work. Second, the bug was only *found* because a new
+benchmark (`bench_lbx.c`) happened to put a compressed instruction at a
+misaligned branch target in its main loop, producing a 9% error that was far too
+large to write off -- a reminder that widening the benchmark set is how latent
+modelling bugs surface.
 
 ### What the model is (and is not) good for
 
@@ -373,6 +410,7 @@ cannot execute any of these either); then measured on RTL.
 | `pg.idx` = `rs2 + ((rs1&0xff)<<2)` | table-index `andi;slli;add` | crc32 | 13,323 model vs 13,326 RTL (-0.02%) | 1,024..2,048 | **2,048** (optimistic end) |
 | `pg.rol` = `rol(rs1,rs2)` | variable rotate `sll;sub;srl;or` | md5sum | 16,392 model vs 16,395 RTL (-0.02%) | 2,046..3,069 | **2,048** (pessimistic end) |
 | `pg.sha` = `(rs1>>>15)+rs2` | fixed-shift `srai;add` | edn | 14,344 model vs 14,347 RTL (-0.02%) | 0..1,024 | **0** (pessimistic end) |
+| indexed load `rd = *(rs1+rs2)` | `add;lbu` | matmult-int | 10,249 model vs 10,253 RTL (-0.04%) | 0..2,046 | **1,024** |
 
 All three compute correctly (identical results to their baselines). `pg.idx`'s
 saving was exact. The other two show the same real mechanism, at different
@@ -391,15 +429,41 @@ optimistic end assumes the original schedule survives fusion, the pessimistic
 end assumes a hidden load-use hazard is exposed. Every measured result above
 landed inside its band.
 
+### Fourth instruction: one that needed no new hardware at all
+
+The finder's top candidate on `matmult-int` with memory allowed is `add; lbu` --
+an indexed byte load, `rd = *(rs1+rs2)`. Unlike the three above, this needed
+**no RTL change whatsoever**: CV32E40P's Xpulp mode already implements a native
+register-register indexed load (opcode `LOAD`, `funct3=111`, `funct7=0100000`
+for byte-unsigned). So this validates the finder against hardware that already
+existed, rather than hardware built to match what the finder asked for.
+
+| | measured |
+|---|---|
+| baseline (`add` then `lbu`) | 10,253 |
+| native indexed load | **9,229** |
+| cycles saved | **1,024** |
+
+Same result both ways. The saving landed inside the predicted band.
+
+**One honest correction from this experiment.** The first measurement showed
+*exactly zero* speedup, and the cause was my benchmark, not the instruction: I
+declared the inline-asm output as `uint8_t`, so GCC emitted a redundant
+`zext.b` -- cancelling the instruction the fusion had saved. `funct7=0x20` is
+the *unsigned* byte form and already zero-extends. Declaring the output
+`uint32_t` removed the `zext.b` and the expected 1,024 cycles appeared. Worth
+recording because it is an easy way to accidentally measure zero and conclude an
+instruction is worthless.
+
 ### How much of this is actually validated
 
 Being explicit, because these claims are not all equally strong:
 
 | claim | evidence |
 |---|---|
-| cycle model accuracy | 14 points (7 kernels x 2 cores), 0.00-3.45%, always an over-prediction |
+| cycle model accuracy | 14 points (7 kernels x 2 cores), worst case 0.25%, typically under 0.01% |
 | predicting an existing extension's benefit | 3 points: Zbb (-2.7%), Xpulp single-loop (-0.10%), Xpulp matmult (+15%, cause understood) |
-| discover + add + project a custom instruction | 3 points, all inside their predicted band, on tool-picked idioms |
+| discover + add + project a custom instruction | 4 points, all inside their predicted band, on tool-picked idioms |
 
 The **model** is the strongly validated part. **Projecting a change** is
 thinner, and every miss so far shares one root cause: **recompiling for a new
