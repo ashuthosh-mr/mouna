@@ -1,114 +1,112 @@
-# Screen Before You Build: Trace-Driven Custom-Instruction Discovery as a Low-Cost CHIA Loop
+# Screen Before You Build: Trace-Driven Custom-Instruction Discovery as a CHIA Loop
 
 **Track:** domain-specific architecture co-design / microarchitecture analysis
-**Target core:** CVA6 (6-stage in-order, already integrated as a Chipyard tile)
+**Target core:** CVA6 (6-stage in-order; already a Chipyard tile, and already
+reachable in CHIA as ESP's `ariane` CPU tile)
 
-## The gap we want to close
+## The gap
 
-CHIA's CS2 shows an agent can implement a *given* ISA extension (Bitmanip, Crypto,
-Zicond) in RTL and measure it credibly. Two questions it does not ask:
+`examples/riscv_extensions` (CS2) is an impressive loop: an agent implements
+Bitmanip, Crypto and Zicond in RTL, verified by `riscv_dv_gen_node` and
+`cosim_node`'s Spike/Verilator lockstep, then measured at scale. Two questions it
+does not ask:
 
-1. **Which instruction should exist?** The extensions in CS2 are published specs. The
-   agent implements a known answer; it does not derive one from an application.
-2. **Is it worth building, before you build it?** CS2 learns the answer by executing
-   25 trillion instructions on FireSim. That is a definitive measurement and an
-   expensive one — and it arrives only after the RTL exists.
+1. **Which instruction should exist?** Those three are *published specs*. The agent
+   implements a known answer; nothing derives a candidate from an application.
+2. **Is it worth building, before it is built?** The answer arrives only after RTL
+   exists and a long simulation has run.
 
-CS4 names the resulting problem directly: cheap feedback stages are low-fidelity and
-invite reward hacking, while high-fidelity cascades are costly. CHIA's cheap stage is
-gem5, LLM-aligned to **3% / 6.12%** error against BOOM RTL.
+CS4 names the consequence: cheap feedback is low-fidelity and invites reward
+hacking, high-fidelity cascades are expensive. And the repo shows exactly where the
+hole is — `chia/simulators/` contains `gem5.py` and `champsim.py`, and nothing
+cheaper or more accurate; no example mines a trace for candidate instructions.
 
-We propose the missing front end: a **high-accuracy, near-zero-cost screening node**
-that decides which candidate instructions deserve RTL at all.
+We propose the missing front end: **a candidate-discovery node and a
+high-accuracy analytical screening node**, so RTL generation is only ever spent on
+candidates that have already been shown to pay.
 
 ## The loop
 
-```
-  app binary ──▶ [1] spike -l trace
-                      │
-                      ▼
-                 [2] candidate discovery      mine straight-line fusable sequences
-                      │                       under real ISA encoding constraints
-                      ▼                       (<=N register sources, 1 live-out,
-                 [3] analytical screening      no internal control flow)
-                      │                       cost each with a manual-derived CVA6
-                      │                       pipeline model; emit a BAND, not a
-                      │                       point estimate
-                      ▼
-                 [4] agent: write RTL + decoder for the top survivor   ◀── LLM node
-                      │
-                      ▼
-                 [5] verify: Spike co-sim + riscv-dv random mixes
-                      │
-                      ▼
-                 [6] measure: Verilator; compare against the predicted band
-```
+Composed almost entirely from nodes CHIA already has:
 
-Nodes 2, 3 and 6 are programmatic and cheap; only node 4 spends API credits, and only
-on candidates that survived screening. The loop's output is not just a speedup number
-but a **calibration record**: for every candidate, predicted band vs measured result.
+| stage | node | new? |
+|---|---|---|
+| 1. build target app | `riscv_build_node` | existing |
+| 2. instruction trace | Spike (`-l --log-commits`) | thin new node |
+| 3. **candidate discovery** | mine fusable straight-line sequences under encoding constraints | **new** |
+| 4. **analytical screening** | manual-derived CVA6 pipeline model; emits a *band*, not a point | **new** |
+| 5. write RTL + decoder for top survivor | `ClaudeCodeLLM` + `BashTool`, as CS2 | existing |
+| 6. verify | `riscv_dv_gen_node` + `cosim_node` (Spike/Verilator lockstep) | existing |
+| 7. measure | `ChiselBuildNode` + `verilator_run_node` | existing |
+| 8. calibrate | record predicted band vs measured, feed back | **new** |
 
-## Why we can claim this will work
+Stages 2-4 and 8 are programmatic and cost cents. Only stage 5 spends API credits,
+and only on survivors. Stage 8 is the scientific payload: the loop's output is not a
+speedup number but a **calibration record** — for every candidate, what was
+predicted and what was measured.
 
-We have already run this end to end, outside CHIA, on two OpenHW in-order cores
-(CV32E40P and CV32E40X), and the artifact is open source:
+## Why this is credible
 
-- **Cycle model within 0.25%** of Verilator RTL across 14 points (7 Embench kernels x 2
-  cores), derived from the cores' manuals rather than fitted, always an over-prediction.
+We have run this end to end outside CHIA, on two OpenHW in-order cores (CV32E40P,
+CV32E40X); the artifact is open source:
+
+- An analytical cycle model derived from the cores' manuals — not fitted — within
+  **0.25%** of Verilator RTL across 14 points (7 Embench kernels x 2 cores), and
+  always an over-prediction. For comparison, CHIA's `gem5_align` case study reaches
+  3% / 6.12% by having an agent tune gem5 against BOOM.
 - **Four discovered custom instructions** implemented in RTL and measured. Every
   measured saving landed **inside** its predicted band.
-- The screening stage's value is mostly in what it *rejects*: on one kernel it pruned
-  33 candidates to 11 once a measured interface cost was fed back.
+- Two bugs found in upstream `core-v-verif` while getting there, one of which made
+  every store and load silently return zero.
 
-## The results we expect to report — including the negative ones
+## The results we expect to report, including the negative ones
 
-The headline deliverable is screening accuracy on CVA6 and the compute avoided. But
-the findings we think matter most to A3 are the **failure modes a naive agentic loop
-reports as wins**, both of which we have already measured on real RTL:
+Headline metrics are screening accuracy on CVA6 and RTL-generation attempts avoided.
+But the findings we think matter most to A3 are the **failure modes that a naive
+agentic loop reports as wins** — both already measured on real RTL:
 
-- **Interface cost erases short fusions.** A CV-X-IF multiply-accumulate coprocessor —
-  correct, and the top-ranked candidate under naive scoring — measured **exactly zero
-  speedup**, because the offload round-trip costs the cycle the fusion saved.
-- **Fusion can expose a hidden hazard and cancel itself.** Removing instructions
-  removes scheduling slack. One instruction we added won **0 cycles**: the shorter loop
-  let the compiler place a load directly into the fused operand, and the new load-use
-  stall exactly cancelled the instruction removed.
+- **Interface cost erases short fusions.** A CV-X-IF multiply-accumulate — correct,
+  and the top-ranked candidate under naive scoring — measured **exactly zero**
+  speedup: the offload round-trip costs the cycle the fusion saved.
+- **Fusion can cancel itself.** Removing instructions removes scheduling slack. One
+  instruction we added won **zero cycles**: the shorter loop let the compiler place a
+  load directly into the fused operand, and the new load-use stall exactly offset the
+  instruction removed.
 
-Both are precisely the reward-hacking-shaped errors CS4 warns about, and neither is
-visible to a loop that scores candidates in isolation. Our screening node reports a
-band rather than a point estimate specifically to surface them.
+Neither is visible to a scorer that costs candidates in isolation, and both are
+precisely the shape of result an agent would confidently claim as a success. Our
+screening node reports a band rather than a point estimate specifically to surface
+them, and stage 8 measures how often the band was right.
 
-## Honest risk, and how we handle it
+## Honest risk
 
-Our 0.25% figure was obtained on in-order pipelines with a zero-wait-state memory
-system. **CVA6 has L1 caches, an MMU, and a scoreboard that permits out-of-order
-writeback for long-latency operations.** We do not expect that number to transfer, and
-we will not claim it does. The plan is to model the CVA6 pipeline analytically and
-compose it with a separate memory-system evaluator (gem5 or ChampSim, already CHIA
-nodes) rather than pretend one analytical model covers both — which is itself an
-exercise in the heterogeneous-evaluator composition CHIA is built for. If pipeline-only
-accuracy proves insufficient for screening, that is a reportable result, not a failure
-of the loop.
+The 0.25% figure came from in-order pipelines with a **zero-wait-state memory
+system**. CVA6 has L1 caches, an MMU, and a scoreboard permitting out-of-order
+writeback for long-latency ops. We do not expect that number to transfer and will
+not claim it does. The plan is to model the CVA6 pipeline analytically and compose it
+with an existing memory-system evaluator (`gem5.py` or `champsim.py`) rather than
+pretend one analytical model covers both — which is itself the heterogeneous-evaluator
+composition CHIA is built for. If pipeline-only accuracy turns out to be insufficient
+for screening, that is a reportable result about where analytical screening stops
+working, not a failed loop.
 
 ## Cost estimate
 
-Deliberately at the low end of the band. Nodes 1-3 and 6 are Spike, Python and
-Verilator — cheap CPU only. Credits are spent almost entirely on node 4 (the RTL-writing
-agent) and its verification retries.
-
 | item | estimate |
 |---|---|
-| Gemini API — RTL generation + repair across ~10-15 candidate instructions | $200 |
-| GCP CPU — Chipyard/Verilator builds and Embench/SPEC-subset runs | $100 |
+| LLM API — RTL generation and repair across ~10-15 candidates | $200 |
+| GCP CPU — Chipyard/Verilator builds, Spike traces, Embench runs | $100 |
 | Contingency — verification retries, extra candidates | $100 |
 | **Total** | **~$400** |
 
-No FPGA hours are required for the screening claim. A single optional FireSim run at
-the end would strengthen the final measurement, if credits allow.
+Stages 2-4 and 8 are Spike, Python and Verilator: cheap CPU only. No FPGA hours are
+needed for the screening claim; one optional FireSim run would strengthen the final
+measurement if credits allow.
 
 ## Deliverables
 
-An open-sourced CHIA loop with the discovery and screening nodes reusable
-independently of our core choice, the CVA6 pipeline model, and a 4-page paper reporting
-screening accuracy, compute avoided, and the calibration record of predicted bands vs
-measured results.
+An open-sourced CHIA loop; the discovery and screening nodes written to be reusable
+independently of our core choice (a new `chia/simulators/` entry alongside gem5 and
+champsim); the CVA6 pipeline model; and a 4-page paper reporting screening accuracy,
+compute avoided, and the full calibration record of predicted bands versus measured
+results.
