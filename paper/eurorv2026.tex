@@ -4,9 +4,11 @@
 % Compiles on Overleaf (IEEEtran ships there).  No local TeX needed.
 %
 % BEFORE SUBMITTING:
-%   1. Confirm the city in the affiliation block below (inferred, not checked).
-%   2. Verify the \cite{cidre} arXiv id (2509.15782) against the real paper.
-% Affiliation and the PARISCV v1 citation are both settled.
+%   1. Verify the \cite{cidre} arXiv id (2509.15782) against the real paper.
+%      This is the last unchecked fact in the paper.
+%   2. Optionally add a personal contact address (see the author block).
+% Submitting unaffiliated: Calligo's publication policy is unknown, so the
+% affiliation is not asserted. It can go on the camera-ready instead.
 %=============================================================================
 \documentclass[conference,10pt]{IEEEtran}
 \usepackage[utf8]{inputenc}
@@ -29,14 +31,18 @@ Discovery on OpenHW CORE-V}
 % it with them. To keep the paper unaffiliated instead, comment this block out
 % and use the alternative below with a PERSONAL email address.
 \author{\IEEEauthorblockN{Ashuthosh M. R.}
-\IEEEauthorblockA{Calligo Technologies\\
-Bengaluru, India\\
-Email: ashuthosh.mr@calligotech.com}}
+\IEEEauthorblockA{Independent Researcher}}
 
-% Alternative, unaffiliated. Replace the address with a personal one.
+% No contact address is given, deliberately: the employer address does not
+% belong on an unaffiliated paper, and a placeholder would risk shipping as one.
+% Add a PERSONAL address here if you want one in print, e.g.
+%   \IEEEauthorblockA{Independent Researcher\\ Email: you@example.com}
+%
+% Affiliated variant, for the camera-ready if Calligo's publication policy
+% turns out to permit it:
 % \author{\IEEEauthorblockN{Ashuthosh M. R.}
-% \IEEEauthorblockA{Independent Researcher\\
-% Email: <personal-address>}}
+% \IEEEauthorblockA{Calligo Technologies\\
+% Email: ashuthosh.mr@calligotech.com}}
 
 \maketitle
 
