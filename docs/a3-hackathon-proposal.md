@@ -1,94 +1,91 @@
-# Granularity-Aware Co-Design: Deciding *What Kind* of Hardware to Build, Before Building It
+# Granularity-Aware Co-Design: Choosing *What Kind* of Hardware to Build
 
-**Target:** Rocket + RoCC + Gemmini in Chipyard — every tier measured under Verilator,
-no commercial EDA
-**Prior work:** open-source, already running end-to-end outside CHIA on two OpenHW cores
+**Target:** Rocket + RoCC + Gemmini in Chipyard. Every result measured under Verilator;
+no commercial EDA.
+**Prior work:** open-source, already running end-to-end on two OpenHW cores.
 
 ## Overview
 
-CHIA has both ends of the granularity spectrum. `examples/riscv_extensions` has an
-agent implement a RISC-V extension in RTL, verified by Spike/Verilator lockstep and
-riscv-dv. `examples/esp_accel_loop` has an agent implement a DMA-driven accelerator
-tile in HLS C++, validated in full-SoC simulation. **Neither chooses.** CS2 is handed a
-published spec (Bitmanip, Crypto, Zicond); the ESP loop is handed "implement memcpy."
-Nothing derives a candidate from an application, and nothing decides *at what
-granularity* work should be accelerated. No cheap stage exists that could:
-`chia/simulators/` holds only gem5 and champsim, and Spike appears only as lockstep
-verification, never as a trace source. We propose the missing decision stage: **one
-trace, one model, three routes** — in-pipeline decoder edit, RoCC coprocessor, or
-Gemmini-class accelerator — chosen by measured break-even cost, not intuition.
+Given an application, what hardware should you build for it? A fused instruction? A
+coprocessor? A full accelerator?
+
+CHIA can build all three, but it never decides which. `examples/riscv_extensions` is
+handed a published spec to implement; `examples/esp_accel_loop` is handed "implement
+memcpy." Nothing derives a candidate from a real application, and nothing decides at
+what *granularity* to accelerate it.
+
+We propose that missing decision stage. One Spike trace and one cycle model classify
+each hot region by size, route it to the cheapest hardware that fits, and hand it to
+CHIA's existing agent loops to build and verify.
+
+Nothing in CHIA does this today: `chia/simulators/` holds only gem5 and champsim, and
+Spike is used solely for lockstep verification, never as a trace source for analysis.
 
 ## Methodology
 
-```
-app ─▶ spike -l ─▶ discover hot regions & fusable sequences ─▶ classify by granularity
-                                        │
-      ┌─────────────────────────────────┼─────────────────────────────────┐
-      ▼                                 ▼                                 ▼
- 1-2 instr, ALU                  3+ instr, ALU/mem                 loop nest / kernel
- Rocket decoder edit             RoCC coprocessor                  Gemmini (DMA +
- in-pipeline: ~1 cyc             offload: calibrate                scratchpad + config)
-      │                                 │                                 │
-      └──── agent writes Chisel (reusing chia/chipyard build+cosim) ──────┘
-                                        │
-       verify (Spike lockstep, riscv-dv) ─▶ measure (Verilator) ─▶ calibrate
-```
+Each size of hot region has a different hardware answer, and a different cost to beat:
 
-Thresholds come from RTL measurement, not intuition. On CV32E40P an in-pipeline
-custom instruction retires in **1** cycle while a CV-X-IF offload cost **2** — so a
-two-instruction fusion is break-even by construction, and we measured one at
-**exactly zero speedup**. We recalibrate the same break-even for RoCC on Rocket.
-Because tiers 2 and 3 both attach over **RoCC**, the comparison isolates *granularity*
-rather than confounding it with interface and toolchain.
+| hot region | route | cost to beat |
+|---|---|---|
+| 1–2 instructions | edit Rocket's decoder | ~1 cycle (stays in-pipeline) |
+| 3+ instructions | RoCC coprocessor | offload latency (we calibrate it) |
+| loop nest / kernel | Gemmini accelerator | DMA + config + data marshalling |
 
-**The contribution: coarse acceleration creates fine-grained work.** Speedup is set by
-the *residual* core cost — marshalling, tiling, configuration — not accelerator
-throughput. Gemmini makes this directly measurable, and is our validation target: its
-ISA exposes both hand-tiled `mvin`/`matmul`/`mvout` loops and CISC `gemmini_loop_ws`,
-whose `LoopMatmul` FSM exists, in its authors' words, because of "CPU and loop
-overheads" — explicitly a performance enhancer adding no new functionality. Running
-both is a controlled A/B on the residual, and asks whether our classifier can *derive
-from a trace* a design decision Gemmini's authors made by hand — the same validation
-pattern as when our finder's top candidate turned out to be an instruction CV32E40P
-already implemented natively.
+The loop around that table: **classify → agent writes Chisel → Spike lockstep and
+riscv-dv verify → Verilator measures → thresholds recalibrate.**
 
-**In three weeks:** the classifier across all three tiers (cheap — it is analysis),
-the fine and RoCC routes end-to-end on Rocket (both already done on CV32E40P/X), and
-**one** Gemmini case with the tiled-versus-CISC A/B. We will not claim more.
+These thresholds are measured, not guessed. On CV32E40P a custom instruction retires in
+1 cycle, while offloading over CV-X-IF cost 2. So fusing two instructions can never
+win — and we measured exactly that: zero speedup. We recalibrate the same way for RoCC.
+
+Note that tiers 2 and 3 both attach over RoCC. That makes granularity the only variable
+between them, rather than confounding it with interface and toolchain.
+
+**Why coarse and fine interact.** An accelerator's speedup is limited by the work left
+behind on the CPU — moving data in and out, configuring, tiling — not by the
+accelerator's own throughput. So offloading a kernel *creates* new fine-grained work,
+which may then deserve its own instruction. One trace answers both questions.
+
+Gemmini lets us measure this directly. Its ISA offers two ways to run a large matmul:
+hand-written tiling loops, or a single CISC instruction whose hardware unroller exists,
+in its authors' words, because of "CPU and loop overheads." Running both isolates the
+residual. It also tests whether our classifier can derive a design decision Gemmini's
+authors already made by hand.
+
+**Scope for three weeks:** the classifier for all three tiers, the first two routes
+end-to-end on Rocket, and one Gemmini case. We will not claim more.
 
 ## Expected Results
 
-An analytical cycle model derived from the cores' manuals — not fitted — already lands
-within **0.25%** of Verilator RTL across 14 points on two OpenHW cores, always
-over-predicting (`gem5_align` reaches 3%/6.12% by tuning gem5 against BOOM). Four
-discovered instructions were implemented in RTL; every measured saving fell **inside**
-its predicted band, and two upstream `core-v-verif` bugs surfaced on the way. We expect
-the most valuable results to be **failure modes a naive agentic loop would report as
-wins**, both already measured: a correct CV-X-IF multiply-accumulate, top-ranked under
-naive scoring, won **zero cycles**; a fusion won **zero** because removing instructions
-removed the slack hiding a load-use hazard. Our screening node emits a *band*, and calibration measures how
-often it held — that is the number we report.
+Our cycle model is derived from core manuals rather than fitted to results. It already
+lands within **0.25%** of Verilator across 14 measurements on two cores, and always
+over-predicts. Four discovered instructions were built in RTL, and every measured
+saving landed inside its predicted range.
 
-**Three risks stated plainly.** (1) Our 0.25% came from a zero-wait-state memory
-system; Rocket has caches and an MMU, and Gemmini's DMAs share a TLB, so we compose
-the pipeline model with `gem5.py`/`champsim.py` rather than assume that figure
-transfers. (2) Our known bound: recompiling relays out and reschedules code, so a
-baseline trace cannot show the new schedule — hence bands, not point estimates. (3)
-Gemmini's CISC unroller may already absorb most of the residual; if so, that is a
-reportable negative result, measured by the same A/B.
+The results we expect to matter most are the ones a naive loop would get wrong. Both
+are already measured. A correct CV-X-IF multiply-accumulate, ranked first under naive
+scoring, won **zero** cycles. A fusion also won **zero**, because removing instructions
+exposed a load-use stall that the longer schedule had been hiding. Our screening step
+therefore reports a *range* rather than a number, and we report how often it held.
 
-**Deliverables:** a CHIA fork (BSD-3, upstreamable) adding a discovery node and a
-granularity-aware screening node as a `chia/simulators/` entry alongside gem5 and
-champsim, reusing `chia/chipyard`'s existing build, cosim and Verilator nodes;
-`examples/mouna_loop/`; the Rocket pipeline model; and a 4-page paper reporting routing
-accuracy, the fine/coarse interaction, and every predicted band against its measured
-result. Per CHIA's AI-assisted contributions policy, agent involvement is disclosed and
-authorship accountability is ours.
+**Risks.**
+
+1. Our 0.25% came from a simple memory system. Rocket has caches and an MMU, so we
+   compose our pipeline model with `gem5.py`/`champsim.py` rather than assume the
+   figure transfers.
+2. Recompiling reschedules code, and a baseline trace cannot predict the new schedule.
+   This is precisely why we report ranges.
+3. Gemmini's hardware unroller may already absorb most of the residual. If it does,
+   that is a real result, measured the same way.
+
+**Deliverables.** A CHIA fork (BSD-3, upstreamable) adding a discovery node and a
+granularity-aware screening node alongside gem5 and champsim, reusing
+`chia/chipyard`'s existing build, cosim and Verilator nodes; `examples/mouna_loop/`;
+the Rocket pipeline model; and a 4-page paper. Agent involvement is disclosed per
+CHIA's AI-assisted contributions policy.
 
 ## Cost Estimate
 
-**~$500** total: **$250** LLM API (Chisel generation and repair across ~10-15
-candidates and three tiers), **$150** GCP CPU (Chipyard elaborate/Verilator builds,
-Spike traces, benchmark runs), **$100** contingency for verification retries.
-Discovery, screening and calibration run on Spike, Python and Verilator — cheap CPU
-only, with no FPGA hours and no commercial EDA licences required.
+**~$500.** $250 LLM API (Chisel generation and repair, 10–15 candidates across three
+tiers), $150 GCP CPU (Chipyard builds, Spike traces, benchmark runs), $100 contingency
+for verification retries. No FPGA hours and no commercial EDA licences required.
