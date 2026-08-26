@@ -18,6 +18,21 @@
 \usepackage{microtype}
 \IEEEoverridecommandlockouts
 
+% Float placement. Three floats in a two-page paper exceeds IEEEtran's defaults
+% (topnumber 2, totalnumber 3, topfraction 0.7), so LaTeX cannot place them and
+% defers everything to the end of the document. Relax the limits and allow a
+% column to be mostly float.
+\renewcommand{\topfraction}{0.95}
+\renewcommand{\bottomfraction}{0.6}
+\renewcommand{\textfraction}{0.05}
+\renewcommand{\floatpagefraction}{0.7}
+\renewcommand{\dbltopfraction}{0.95}
+\renewcommand{\dblfloatpagefraction}{0.7}
+\setcounter{topnumber}{3}
+\setcounter{bottomnumber}{2}
+\setcounter{totalnumber}{5}
+\setcounter{dbltopnumber}{3}
+
 \begin{document}
 
 \title{PARISCV v2: A Validated Cycle Model for\\
@@ -158,7 +173,7 @@ cycles their replacement will itself take.
 Ground truth is Verilator~\cite{verilator} simulation of each core through
 \texttt{core-v-verif}, with the measured region bracketed by \texttt{rdcycle}.
 
-\begin{table*}[t]
+\begin{table*}[!t]
 \centering
 \caption{Model versus RTL on seven Embench-IoT kernels at
 \texttt{LOCAL\_SCALE\_FACTOR=1}. The model under-predicts slightly and
@@ -198,7 +213,7 @@ large to write off, which is how latent modelling bugs tend to surface.
 
 \section{Predicting a change before building it}
 
-\begin{table}[t]
+\begin{table}[!t]
 \centering
 \caption{Predicted versus measured effect of an ISA change. The Zbb row
 is cycles saved; the Xpulp rows are speedup.}
