@@ -58,13 +58,13 @@ simulation, it scores hardware that does not yet exist. We use it to predict
 enabling Zbb (within 2.7\%) and the Xpulp extension (a measured
 $3.24\times$ speedup predicted to 0.10\%), and to discover, add and verify four
 custom instructions whose measured savings all fell inside their predicted
-bands. Two results were negative and are the most useful: a correct CV-X-IF
-multiply-accumulate coprocessor won \emph{exactly zero} cycles, because the
-interface costs two cycles of offload and a two-instruction fusion is therefore
-break-even by construction; and up to 8.4\% of all cycles are lost purely to
-branch-target misalignment, which on one kernel exceeds the entire benefit of
-the bitmanip extension and needs no hardware at all. All code, patches and
-measurements are open source.
+bands, recovering 10--15\% of their kernels' cycles where they paid at all.
+Measuring the CV-X-IF interface showed that an offload costs two cycles, which
+puts a floor of three cycles on any sequence worth offloading and pruned 33
+nominally viable candidates to 11. A further 8.4\% of cycles turned out to be
+recoverable with no hardware change whatsoever, lost purely to branch-target
+misalignment, which on one kernel exceeds the entire benefit of the bitmanip
+extension. All code, patches and measurements are open source.
 \end{abstract}
 
 \section{Motivation}
@@ -72,8 +72,7 @@ measurements are open source.
 On a short in-order pipeline, arithmetic is rarely the bottleneck.
 Fig.~\ref{fig:breakdown} decomposes seven Embench-IoT~\cite{embench} kernels on
 CV32E40X: branch and jump flushes take 14--26\% of all cycles and IPC sits
-between 0.46 and 0.83. A custom-instruction search that ranks candidates by how
-much \emph{arithmetic} they remove is therefore optimising the wrong term.
+between 0.46 and 0.83. Most of the recoverable headroom is therefore not arithmetic at all.
 
 \begin{figure}[!b]
 \centering
@@ -135,16 +134,24 @@ cores differ. Divide latency is data-dependent
 ($3+\mathrm{clz}(\mathit{divisor})$), so the model recovers each actual divisor
 by replaying register writes from \texttt{spike --log-commits}.
 
-\textbf{Layout matching is a precondition, not a detail.} A taken branch costs
-three cycles, or four when its target is a non-word-aligned, non-compressed
-instruction. Two builds of identical C source linked at different base
-addresses therefore genuinely execute at different cycle counts. We measured
-5{,}844 versus 6{,}356 cycles for the same algorithm. Every kernel is built
-twice (Spike at a high address, RTL at the boot address) with data sections
-pinned to matching absolute addresses so that \texttt{.text} is byte-identical,
-and each build script verifies this automatically before reporting a number.
-Skip this step and what looks like model error is mostly an artefact of the
-harness.
+Code layout has to match. A taken branch costs three cycles, or four when its
+target is a non-word-aligned, non-compressed instruction, so two builds of
+identical C source linked at different addresses genuinely differ: we measured
+5{,}844 against 6{,}356 cycles for the same algorithm. Each kernel is therefore
+built twice, Spike at a high address and RTL at the boot address, with
+\texttt{.text} verified byte-identical before any number is reported. Skip this
+and what looks like model error is mostly an artefact of the harness.
+
+Candidate discovery runs on the same trace. The finder enumerates every
+straight-line window of up to four instructions, discards any window containing
+control flow, and canonicalises the rest by renaming registers to positional
+slots, so one computation collapses to a single candidate however it was
+allocated. A window survives only if it reads at most \texttt{X\_NUM\_RS}
+registers from the register file and leaves exactly one value live out, which is
+what one custom instruction can express; values both produced and consumed inside
+the window become internal wires and cost nothing. Survivors are then scored with
+the same model, credited with the cycles the sequence costs and debited the
+cycles their replacement will itself take.
 
 \section{Validation}
 
@@ -233,10 +240,13 @@ trace can be pushed.
 A candidate finder mines the trace for straight-line sequences worth fusing,
 constrained to one live-out result and a bounded number of register-file
 sources, and scores each with the same validated model. Four discovered
-instructions were added to CV32E40P by decoder edit and measured; all four
-computed correctly and every measured saving fell inside its predicted band
-(\texttt{pg.idx}, a \texttt{crc32} table index, saved exactly the predicted
-2{,}048 cycles).
+instructions were added to CV32E40P by decoder edit and measured. All four
+computed correctly and every measured saving fell inside its predicted band. On
+the idiom kernels they were mined from, one instruction recovered 2{,}048 of
+13{,}326 cycles for a \texttt{crc32} table index (15.4\%), 2{,}048 of 16{,}395
+for an \texttt{md5sum} variable rotate (12.5\%), 1{,}024 of 10{,}253 for a
+\texttt{matmult-int} indexed load (10.0\%), and nothing at all for an
+\texttt{edn} fixed shift.
 
 The bands are not hedging. Fusing removes instructions, and with them the
 scheduling slack that was hiding a load-use hazard: after recompiling, GCC
@@ -272,7 +282,9 @@ A cycle model taken from published pipeline documentation rather than fitted to
 measurements predicted real-core cycle counts on two OpenHW cores to within
 0.25\%, and that was accurate enough to settle design questions before the
 hardware existed: whether to enable Zbb, what Xpulp would be worth, and which
-four custom instructions to add. The result we did not anticipate is that the
+four custom instructions to add. Those instructions recovered 10--15\% of their
+kernels' cycles wherever they paid at all, and Xpulp reached $3.24\times$ on a
+single loop. The result we did not anticipate is that the
 interface, not the arithmetic, sets the smallest fusion worth building. Two
 upstream bugs were found and patched on the way, one leaving every CV32E40X
 load and store carrying zero in \texttt{core-v-verif}'s Verilator wrapper, the
