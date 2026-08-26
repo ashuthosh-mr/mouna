@@ -73,8 +73,12 @@ Existing instruction-set-extension (ISE) search tools estimate benefit from
 instruction counts or from a simulator with no microarchitecture~\cite{cidre}.
 We argue the estimate must instead come from a model of the specific target
 pipeline, and that the model must be validated against that core's RTL before
-any of its recommendations are trusted. This paper reports that validation and
-what it then revealed.
+any of its recommendations are trusted. The work continues
+PARISCV~\cite{pariscv1}, a profiler for application-specific RISC-V
+optimisation. What is new here is that the estimate comes from a cycle model
+checked against the target core's own RTL, so a candidate can be scored before
+any hardware for it exists. This paper reports that validation and what it then
+revealed.
 
 \section{Method}
 
@@ -92,41 +96,44 @@ by replaying register writes from \texttt{spike --log-commits}.
 \textbf{Layout matching is a precondition, not a detail.} A taken branch costs
 three cycles, or four when its target is a non-word-aligned, non-compressed
 instruction. Two builds of identical C source linked at different base
-addresses therefore genuinely execute at different cycle counts --- we measured
+addresses therefore genuinely execute at different cycle counts. We measured
 5{,}844 versus 6{,}356 cycles for the same algorithm. Every kernel is built
 twice (Spike at a high address, RTL at the boot address) with data sections
 pinned to matching absolute addresses so that \texttt{.text} is byte-identical,
 and each build script verifies this automatically before reporting a number.
-Without this, model error is dominated by an artefact of the harness.
+Skip this step and what looks like model error is mostly an artefact of the
+harness.
 
 \section{Validation}
 
 Ground truth is Verilator~\cite{verilator} simulation of each core through
 \texttt{core-v-verif}, with the measured region bracketed by \texttt{rdcycle}.
 
-\begin{table}[t]
+\begin{table*}[t]
 \centering
-\caption{Model versus RTL, \texttt{LOCAL\_SCALE\_FACTOR=1}. Error is signed;
-the model always slightly under-predicts by the few cycles of the bracketing
-\texttt{rdcycle} pair.}
+\caption{Model versus RTL on seven Embench-IoT kernels at
+\texttt{LOCAL\_SCALE\_FACTOR=1}. The model under-predicts slightly and
+consistently, by the few cycles of the \texttt{rdcycle} pair that brackets the
+measured region.}
 \label{tab:val}
-\small
-\begin{tabular}{lrrrrr}
+\footnotesize
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{@{}lrrrrrrr@{}}
 \toprule
-& & \multicolumn{2}{c}{CV32E40X} & \multicolumn{2}{c}{CV32E40P}\\
-\cmidrule(lr){3-4}\cmidrule(lr){5-6}
-kernel & instrs & RTL & err & RTL & err\\
+& & \multicolumn{3}{c}{CV32E40X} & \multicolumn{3}{c}{CV32E40P}\\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+kernel & instructions & model & RTL & error & model & RTL & error\\
 \midrule
-\texttt{matmult-int} & 97{,}748    & 134{,}545   & 0.00\% & 134{,}547   & 0.00\%\\
-\texttt{primecount}  & 2{,}273{,}871 & 3{,}927{,}224 & 0.00\% & 3{,}927{,}226 & 0.00\%\\
-\texttt{edn}         & 49{,}365    & 65{,}179    & 0.00\% & 65{,}181    & 0.01\%\\
-\texttt{tarfind}     & 53{,}846    & 117{,}149   & 0.00\% & 117{,}151   & 0.00\%\\
-\texttt{md5sum}      & 52{,}607    & 71{,}400    & 0.00\% & 71{,}402    & 0.01\%\\
-\texttt{statemate}   & 1{,}159     & 1{,}606     & 0.12\% & 1{,}608     & 0.25\%\\
-\texttt{crc32}       & 24{,}608    & 29{,}737    & 0.01\% & 29{,}739    & 0.01\%\\
+\texttt{matmult-int} & 97{,}748      & 134{,}543   & 134{,}545   & 0.00\% & 134{,}543   & 134{,}547   & 0.00\%\\
+\texttt{primecount}  & 2{,}273{,}871 & 3{,}927{,}222 & 3{,}927{,}224 & 0.00\% & 3{,}927{,}222 & 3{,}927{,}226 & 0.00\%\\
+\texttt{edn}         & 49{,}365      & 65{,}177    & 65{,}179    & 0.00\% & 65{,}177    & 65{,}181    & 0.01\%\\
+\texttt{tarfind}     & 53{,}846      & 117{,}147   & 117{,}149   & 0.00\% & 117{,}147   & 117{,}151   & 0.00\%\\
+\texttt{md5sum}      & 52{,}607      & 71{,}398    & 71{,}400    & 0.00\% & 71{,}398    & 71{,}402    & 0.01\%\\
+\texttt{statemate}   & 1{,}159       & 1{,}604     & 1{,}606     & 0.12\% & 1{,}604     & 1{,}608     & 0.25\%\\
+\texttt{crc32}       & 24{,}608      & 29{,}735    & 29{,}737    & 0.01\% & 29{,}735    & 29{,}739    & 0.01\%\\
 \bottomrule
 \end{tabular}
-\end{table}
+\end{table*}
 
 Table~\ref{tab:val} gives 14 points at worst 0.25\% error. We stress that this
 figure is only meaningful alongside how it was reached. For most of the project
@@ -140,9 +147,9 @@ branch targets were word-aligned or genuinely 32-bit; \texttt{crc32} branches to
 a compressed instruction at a misaligned address and was wrongly charged one
 cycle on all 1{,}023 iterations. Deriving length from the encoding's low two
 bits, as RISC-V defines, moved \texttt{crc32} to $-0.01\%$ and the worst case to
-0.25\%. It was found only because a newly added kernel produced a 9\% error too
-large to dismiss --- widening the benchmark set is how latent modelling bugs
-surface.
+0.25\%. We only found it because a newly added kernel produced a 9\% error that
+was too large to write off. Widening the benchmark set is how latent modelling
+bugs come to light.
 
 \section{Predicting a change before building it}
 
@@ -166,21 +173,22 @@ Xpulp, matmult & 40P & $1.305\times$  & $1.502\times$  & $+15\%$\\
 
 Zbb is predicted from a baseline trace before the bitmanip hardware is enabled.
 Xpulp is harder: Spike cannot execute Xpulp at all, so the extension's binary
-cannot be traced. We instead transform the \emph{baseline} trace analytically
---- converting counted loops to hardware loops, folding address arithmetic into
-post-increment load/store, fusing \texttt{mul}+\texttt{add} into \texttt{p.mac}
---- and re-cost it with the validated model.
+cannot be traced. We instead transform the \emph{baseline} trace analytically, converting counted
+loops to hardware loops, folding address arithmetic into post-increment
+load/store and fusing \texttt{mul}+\texttt{add} into \texttt{p.mac}, then re-cost
+the result with the validated model.
 
-The $+15\%$ outlier is instructive and we report it rather than drop it.
+We have kept the $+15\%$ outlier rather than dropping it, because the reason it
+is wrong is the useful part.
 Recompiling for an extension \emph{relays out the code}, and taken-branch cost
 depends on target alignment, which the predictor cannot know from the baseline
 layout; it therefore emits an explicit uncertainty band rather than false
 precision. More fundamentally, Xpulp's largest win on matmult is not fusion but
 \emph{induction-variable strength reduction}: GCC restructures index-based
 addressing into pointer-walking \emph{because} post-increment exists.
-Predicting an ISA extension means modelling the compiler's response to it, not
-only the hardware's --- a real bound on predicting arbitrary ISA changes from
-one baseline trace.
+Predicting an ISA extension therefore means modelling the compiler's response to
+it, not only the hardware's. That is a real bound on how far a single baseline
+trace can be pushed.
 
 \section{Discovering instructions, and where interfaces bite}
 
@@ -209,7 +217,7 @@ in two cycles where \texttt{mul; add} took two. \emph{A two-instruction fusion
 across CV-X-IF can never win}; a sequence must be at least three cycles before
 offload pays. Feeding the measured two-cycle latency back into the finder pruned
 33 nominally viable candidates on \texttt{matmult-int} to 11, all
-memory-addressing sequences --- which is what Xpulp implements, now derived from
+memory-addressing sequences, which is what Xpulp implements, now derived from
 measurement rather than assumed. The same operation \emph{in} the pipeline
 (\texttt{p.mac}) costs one cycle, identical to \texttt{add}. This is the
 clearest evidence for why Xpulp lives in the decoder and why CV-X-IF suits
@@ -217,8 +225,8 @@ coarse-grained offload instead.
 
 \textbf{Free cycles with no hardware.} Branch-target misalignment costs
 3.6--9.1\% of all cycles across our kernels. On \texttt{edn} that is 4{,}478
-cycles --- larger than the 3{,}669 cycles won by enabling the entire bitmanip
-extension. It requires only alignment from the compiler or linker.
+cycles, larger than the 3{,}669 cycles won by enabling the entire bitmanip
+extension. All it needs is alignment from the compiler or linker.
 
 \section{Byproducts and status}
 
@@ -238,8 +246,8 @@ finder retains after calibration are exactly the coarse ones, and the natural
 target for them is a PULP-style accelerator such as RedMulE~\cite{redmule},
 which attaches over CV-X-IF itself. Routing a candidate to an accelerator rather
 than an instruction requires predicting the \emph{residual} cost left on the
-core --- data marshalling, configuration and synchronisation --- which is the
-same quantity the stall breakdown already reports. Code, patches and every number
+core (data marshalling, configuration and synchronisation), which is the same
+quantity the stall breakdown already reports. Code, patches and every number
 above: \url{https://github.com/ashuthosh-mr/mouna}.
 
 \balance
@@ -261,8 +269,10 @@ Acceleration,'' arXiv:2301.03904, 2023.
 \bibitem{xpulp} M.~Gautschi \emph{et al.}, ``Near-Threshold RISC-V Core With
 DSP Extensions for Scalable IoT Endpoint Devices,'' \emph{IEEE Trans. VLSI
 Syst.}, 2017.
-% FILL IN: exact title, venue and year of the original PARISCV paper.
-\bibitem{pariscv1} [PARISCV v1 --- fill in exact title, authors, venue, year].
+\bibitem{pariscv1} Spoorthi~S., M.~R.~Ashuthosh, Bharadhwaj~K., V.~Reddy and
+M.~Purnaprajna, ``PARISCV: A RISC-V Profiler for Application-Specific Hardware
+Optimization,'' in \emph{Proc. IEEE 32nd Int. Conf. High Performance Computing,
+Data and Analytics Workshop (HiPCW)}, 2025, pp.~303--304.
 \end{thebibliography}
 
 \end{document}
