@@ -220,9 +220,10 @@ in the wrong order, violating a constraint the core asserts, so any nested
 hardware loop traps. Both are patched in our repository.
 
 This is work in progress. The model covers in-order pipelines with a
-zero-wait-state memory; extending it to a core with caches and out-of-order
-writeback is ongoing, as is routing candidates too coarse for a custom
-instruction to a DMA-driven accelerator instead. Code, patches and every number
+zero-wait-state memory; extending it to a cached core is ongoing, as is routing
+candidates too coarse for a custom instruction to a coprocessor or a
+DMA-driven accelerator instead --- on Rocket, whose RoCC interface hosts both
+tiers, so that granularity is the only variable between them. Code, patches and every number
 above: \url{https://github.com/ashuthosh-mr/mouna}.
 
 \balance
