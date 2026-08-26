@@ -86,7 +86,7 @@ checked against the target core's own RTL, so a candidate can be scored before
 any hardware for it exists. This paper reports that validation and what it then
 revealed.
 
-\section{Method}
+\section{Methodology}
 
 \texttt{spike -l} yields a commit trace of the unmodified binary. A Python
 model assigns each instruction its documented cost from the CV32E40X or
@@ -196,7 +196,7 @@ Predicting an ISA extension therefore means modelling the compiler's response to
 it, not only the hardware's. That is a real bound on how far a single baseline
 trace can be pushed.
 
-\section{Discovering instructions, and where interfaces bite}
+\section{Discovering New Instructions}
 
 A candidate finder mines the trace for straight-line sequences worth fusing,
 constrained to one live-out result and a bounded number of register-file
@@ -234,17 +234,19 @@ coarse-grained offload instead.
 cycles, larger than the 3{,}669 cycles won by enabling the entire bitmanip
 extension. All it needs is alignment from the compiler or linker.
 
-\section{Byproducts and status}
+\section{Conclusions and Future Work}
 
-Two upstream bugs surfaced. In \texttt{core-v-verif}, the CV32E40X Verilator
-wrapper never connected \texttt{data\_wdata\_o}/\texttt{data\_rdata\_i}, so
-every store wrote zero and every load returned zero; the corresponding
-\texttt{PINMISSING} warning was suppressed by the build's \texttt{--Wno-lint}.
-In the PULP GCC fork, nested hardware loops are emitted with the loop registers
-in the wrong order, violating a constraint the core asserts, so any nested
-hardware loop traps. Both are patched in our repository.
+A cycle model taken from published pipeline documentation rather than fitted to
+measurements predicted real-core cycle counts on two OpenHW cores to within
+0.25\%, and that was accurate enough to settle design questions before the
+hardware existed: whether to enable Zbb, what Xpulp would be worth, and which
+four custom instructions to add. The result we did not anticipate is that the
+interface, not the arithmetic, sets the smallest fusion worth building. Two
+upstream bugs were found and patched on the way, one leaving every CV32E40X
+load and store carrying zero in \texttt{core-v-verif}'s Verilator wrapper, the
+other mis-ordering nested hardware-loop registers in the PULP GCC fork.
 
-This is work in progress. The model covers in-order pipelines with a
+This remains work in progress. The model covers in-order pipelines with a
 zero-wait-state memory; extending it to a cached core is ongoing. The
 granularity result above also points at its own next step: since a sequence must
 exceed roughly three cycles before CV-X-IF offload pays, the candidates the
@@ -255,6 +257,14 @@ than an instruction requires predicting the \emph{residual} cost left on the
 core (data marshalling, configuration and synchronisation), which is the same
 quantity the stall breakdown already reports. Code, patches and every number
 above: \url{https://github.com/ashuthosh-mr/mouna}.
+
+\section*{Acknowledgment}
+
+The cycle models, the candidate finder, the custom-instruction RTL and the
+drafting of this paper were produced with the assistance of an AI coding
+assistant (Anthropic Claude), directed by the author. Every performance figure
+reported here was measured by the author on RTL simulation of the cores named,
+and the author is solely responsible for the content and for any errors.
 
 \balance
 \begin{thebibliography}{9}
