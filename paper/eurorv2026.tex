@@ -1,0 +1,247 @@
+%=============================================================================
+% Euro-RV 2026 (MICRO 2026, Athens, Oct 31) -- 2-page WIP submission
+% Deadline: August 27, 2026.  Single-blind: authors ARE named.
+% Compiles on Overleaf (IEEEtran ships there).  No local TeX needed.
+%
+% BEFORE SUBMITTING -- three things only you can fill in:
+%   1. AFFILIATION below (see comment).
+%   2. The PARISCV v1 self-citation \cite{pariscv1} -- exact title/venue/year.
+%   3. Verify \cite{cidre} arXiv id.
+%=============================================================================
+\documentclass[conference,10pt]{IEEEtran}
+\usepackage[utf8]{inputenc}
+\usepackage{booktabs,graphicx,balance}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+\IEEEoverridecommandlockouts
+
+\begin{document}
+
+\title{Deciding What Hardware to Build Before Building It:\\
+A Trace-Driven Cycle Model Validated to 0.25\% on OpenHW CORE-V}
+
+% AFFILIATION: you are between roles, and calligotech.com is not an
+% affiliation you currently hold -- claiming it would be a factual
+% misstatement on a published paper. "Independent Researcher" is accurate
+% and completely normal at a workshop. Swap it only if you have a real
+% current affiliation.
+\author{\IEEEauthorblockN{Ashuthosh M. R.}
+\IEEEauthorblockA{Independent Researcher\\
+Email: ashuthosh.mr@calligotech.com}}
+
+\maketitle
+
+\begin{abstract}
+Choosing a custom instruction or an ISA extension for an embedded RISC-V core
+normally means writing RTL first and measuring afterwards. We present a
+trace-driven alternative: an analytical cycle model, derived from the OpenHW
+CORE-V user manuals rather than fitted to data, that consumes a Spike
+instruction trace and predicts real-core cycle counts within \textbf{0.25\%}
+worst case (typically under 0.01\%) across seven Embench-IoT kernels on two
+cores, CV32E40X and CV32E40P. Because the model costs a trace rather than a
+simulation, it scores hardware that does not yet exist. We use it to predict
+enabling Zbb (within 2.7\%) and the Xpulp extension (a measured
+$3.24\times$ speedup predicted to 0.10\%), and to discover, add and verify four
+custom instructions whose measured savings all fell inside their predicted
+bands. Two results were negative and are the most useful: a correct CV-X-IF
+multiply-accumulate coprocessor won \emph{exactly zero} cycles, because the
+interface costs two cycles of offload and a two-instruction fusion is therefore
+break-even by construction; and 3.6--9.1\% of all cycles are lost purely to
+branch-target misalignment, which on one kernel exceeds the entire benefit of
+the bitmanip extension and needs no hardware at all. All code, patches and
+measurements are open source.
+\end{abstract}
+
+\section{Motivation}
+
+On a short in-order pipeline, arithmetic is rarely the bottleneck. Our stall
+breakdown across seven Embench-IoT~\cite{embench} kernels on CV32E40X shows
+branch and jump flushes consuming 8--25\% of all cycles, with IPC between 0.45
+and 0.80. A custom-instruction search that ranks candidates by how much
+\emph{arithmetic} they remove is therefore optimising the wrong term.
+
+Existing instruction-set-extension (ISE) search tools estimate benefit from
+instruction counts or from a simulator with no microarchitecture~\cite{cidre}.
+We argue the estimate must instead come from a model of the specific target
+pipeline, and that the model must be validated against that core's RTL before
+any of its recommendations are trusted. This paper reports that validation and
+what it then revealed.
+
+\section{Method}
+
+\texttt{spike -l} yields a commit trace of the unmodified binary. A Python
+model assigns each instruction its documented cost from the CV32E40X or
+CV32E40P user manual~\cite{cv32e40x,cv32e40p} and adds documented penalties:
+taken-branch and jump flushes, branch-target misalignment, load-use hazards and
+\texttt{jalr} data hazards. Costs are \emph{documented, not fitted}; the
+CV32E40P model subclasses the CV32E40X model and overrides only the differences
+the manuals state, so it doubles as an executable specification of how the two
+cores differ. Divide latency is data-dependent
+($3+\mathrm{clz}(\mathit{divisor})$), so the model recovers each actual divisor
+by replaying register writes from \texttt{spike --log-commits}.
+
+\textbf{Layout matching is a precondition, not a detail.} A taken branch costs
+three cycles, or four when its target is a non-word-aligned, non-compressed
+instruction. Two builds of identical C source linked at different base
+addresses therefore genuinely execute at different cycle counts --- we measured
+5{,}844 versus 6{,}356 cycles for the same algorithm. Every kernel is built
+twice (Spike at a high address, RTL at the boot address) with data sections
+pinned to matching absolute addresses so that \texttt{.text} is byte-identical,
+and each build script verifies this automatically before reporting a number.
+Without this, model error is dominated by an artefact of the harness.
+
+\section{Validation}
+
+Ground truth is Verilator~\cite{verilator} simulation of each core through
+\texttt{core-v-verif}, with the measured region bracketed by \texttt{rdcycle}.
+
+\begin{table}[t]
+\centering
+\caption{Model versus RTL, \texttt{LOCAL\_SCALE\_FACTOR=1}. Error is signed;
+the model always slightly under-predicts by the few cycles of the bracketing
+\texttt{rdcycle} pair.}
+\label{tab:val}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+& & \multicolumn{2}{c}{CV32E40X} & \multicolumn{2}{c}{CV32E40P}\\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+kernel & instrs & RTL & err & RTL & err\\
+\midrule
+\texttt{matmult-int} & 97{,}748    & 134{,}545   & 0.00\% & 134{,}547   & 0.00\%\\
+\texttt{primecount}  & 2{,}273{,}871 & 3{,}927{,}224 & 0.00\% & 3{,}927{,}226 & 0.00\%\\
+\texttt{edn}         & 49{,}365    & 65{,}179    & 0.00\% & 65{,}181    & 0.01\%\\
+\texttt{tarfind}     & 53{,}846    & 117{,}149   & 0.00\% & 117{,}151   & 0.00\%\\
+\texttt{md5sum}      & 52{,}607    & 71{,}400    & 0.00\% & 71{,}402    & 0.01\%\\
+\texttt{statemate}   & 1{,}159     & 1{,}606     & 0.12\% & 1{,}608     & 0.25\%\\
+\texttt{crc32}       & 24{,}608    & 29{,}737    & 0.01\% & 29{,}739    & 0.01\%\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:val} gives 14 points at worst 0.25\% error. We stress that this
+figure is only meaningful alongside how it was reached. For most of the project
+\texttt{crc32} sat at $+3.45\%$ on \emph{both} cores while everything else was
+under 2\%; identical error on two different microarchitectures indicated shared
+logic, not either pipeline. The cause was that instruction length was inferred
+from the printed width of the hex encoding in the trace, but \texttt{spike -l}
+zero-pads compressed encodings to eight digits as well, so every compressed
+instruction in every trace was mis-sized. The bug stayed dormant wherever hot
+branch targets were word-aligned or genuinely 32-bit; \texttt{crc32} branches to
+a compressed instruction at a misaligned address and was wrongly charged one
+cycle on all 1{,}023 iterations. Deriving length from the encoding's low two
+bits, as RISC-V defines, moved \texttt{crc32} to $-0.01\%$ and the worst case to
+0.25\%. It was found only because a newly added kernel produced a 9\% error too
+large to dismiss --- widening the benchmark set is how latent modelling bugs
+surface.
+
+\section{Predicting a change before building it}
+
+\begin{table}[t]
+\centering
+\caption{Predicted versus measured effect of an ISA change.}
+\label{tab:predict}
+\small
+\begin{tabular}{llrrr}
+\toprule
+change & core & predicted & measured & err\\
+\midrule
+enable Zbb & 40X & 3{,}570 cyc saved & 3{,}669 & $-2.7\%$\\
+Xpulp, single loop & 40P & $3.243\times$ & $3.241\times$ & $-0.10\%$\\
+Xpulp, $8{\times}8$ matmult & 40P & $1.305\times$ & $1.502\times$ & $+15\%$\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Zbb is predicted from a baseline trace before the bitmanip hardware is enabled.
+Xpulp is harder: Spike cannot execute Xpulp at all, so the extension's binary
+cannot be traced. We instead transform the \emph{baseline} trace analytically
+--- converting counted loops to hardware loops, folding address arithmetic into
+post-increment load/store, fusing \texttt{mul}+\texttt{add} into \texttt{p.mac}
+--- and re-cost it with the validated model.
+
+The $+15\%$ outlier is instructive and we report it rather than drop it.
+Recompiling for an extension \emph{relays out the code}, and taken-branch cost
+depends on target alignment, which the predictor cannot know from the baseline
+layout; it therefore emits an explicit uncertainty band rather than false
+precision. More fundamentally, Xpulp's largest win on matmult is not fusion but
+\emph{induction-variable strength reduction}: GCC restructures index-based
+addressing into pointer-walking \emph{because} post-increment exists.
+Predicting an ISA extension means modelling the compiler's response to it, not
+only the hardware's --- a real bound on predicting arbitrary ISA changes from
+one baseline trace.
+
+\section{Discovering instructions, and where interfaces bite}
+
+A candidate finder mines the trace for straight-line sequences worth fusing,
+constrained to one live-out result and a bounded number of register-file
+sources, and scores each with the same validated model. Four discovered
+instructions were added to CV32E40P by decoder edit and measured; all four
+computed correctly and every measured saving fell inside its predicted band
+(\texttt{pg.idx}, a \texttt{crc32} table index, saved exactly the predicted
+2{,}048 cycles).
+
+The bands are not hedging. Fusing removes instructions, and with them the
+scheduling slack that was hiding a load-use hazard: after recompiling, GCC
+rescheduled the shorter loop so a just-loaded value fed directly into the fused
+instruction, costing back what the fusion won. One instruction won its full
+predicted 2{,}048 cycles and another won zero, by the same mechanism at
+different strengths. A point estimate would have been wrong in both directions.
+
+\textbf{The interface, not the arithmetic, sets the granularity.} We
+implemented \texttt{pg.mac}, a fused multiply-accumulate, as a CV-X-IF
+coprocessor~\cite{cvxif} on CV32E40X. It computes correctly and won
+\textbf{zero cycles}: 13{,}321 versus 13{,}321. The offload costs a cycle,
+because the result must be registered and handed back over
+\texttt{result\_valid}/\texttt{result\_ready}, so the fused instruction retires
+in two cycles where \texttt{mul; add} took two. \emph{A two-instruction fusion
+across CV-X-IF can never win}; a sequence must be at least three cycles before
+offload pays. Feeding the measured two-cycle latency back into the finder pruned
+33 nominally viable candidates on \texttt{matmult-int} to 11, all
+memory-addressing sequences --- which is what Xpulp implements, now derived from
+measurement rather than assumed. The same operation \emph{in} the pipeline
+(\texttt{p.mac}) costs one cycle, identical to \texttt{add}. This is the
+clearest evidence for why Xpulp lives in the decoder and why CV-X-IF suits
+coarse-grained offload instead.
+
+\textbf{Free cycles with no hardware.} Branch-target misalignment costs
+3.6--9.1\% of all cycles across our kernels. On \texttt{edn} that is 4{,}478
+cycles --- larger than the 3{,}669 cycles won by enabling the entire bitmanip
+extension. It requires only alignment from the compiler or linker.
+
+\section{Byproducts and status}
+
+Two upstream bugs surfaced. In \texttt{core-v-verif}, the CV32E40X Verilator
+wrapper never connected \texttt{data\_wdata\_o}/\texttt{data\_rdata\_i}, so
+every store wrote zero and every load returned zero; the corresponding
+\texttt{PINMISSING} warning was suppressed by the build's \texttt{--Wno-lint}.
+In the PULP GCC fork, nested hardware loops are emitted with the loop registers
+in the wrong order, violating a constraint the core asserts, so any nested
+hardware loop traps. Both are patched in our repository.
+
+This is work in progress. The model covers in-order pipelines with a
+zero-wait-state memory; extending it to a core with caches and out-of-order
+writeback is ongoing, as is routing candidates too coarse for a custom
+instruction to a DMA-driven accelerator instead. Code, patches and every number
+above: \url{https://github.com/ashuthosh-mr/mouna}.
+
+\balance
+\begin{thebibliography}{9}
+\small
+\bibitem{embench} J.~Bennett \emph{et al.}, ``Embench: A Modern Embedded
+Benchmark Suite,'' \url{https://www.embench.org}.
+% VERIFY this arXiv id before submitting.
+\bibitem{cidre} ``CIDRE: Custom Instruction Discovery,'' arXiv:2509.15782, 2025.
+\bibitem{cv32e40x} OpenHW Group, \emph{CV32E40X User Manual}.
+\bibitem{cv32e40p} OpenHW Group, \emph{CV32E40P User Manual}.
+\bibitem{cvxif} OpenHW Group, \emph{CORE-V eXtension Interface (CV-X-IF)
+Specification}.
+\bibitem{verilator} W.~Snyder, ``Verilator,'' \url{https://verilator.org}.
+\bibitem{xpulp} M.~Gautschi \emph{et al.}, ``Near-Threshold RISC-V Core With
+DSP Extensions for Scalable IoT Endpoint Devices,'' \emph{IEEE Trans. VLSI
+Syst.}, 2017.
+% FILL IN: exact title, venue and year of the original PARISCV paper.
+\bibitem{pariscv1} [PARISCV v1 --- fill in exact title, authors, venue, year].
+\end{thebibliography}
+
+\end{document}
