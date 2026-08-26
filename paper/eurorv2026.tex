@@ -138,6 +138,32 @@ then revealed.
 
 \section{Methodology}
 
+\begin{table*}[!t]
+\centering
+\caption{Model versus RTL on seven Embench-IoT kernels at
+\texttt{LOCAL\_SCALE\_FACTOR=1}. The model under-predicts slightly and
+consistently, by the few cycles of the \texttt{rdcycle} pair that brackets the
+measured region.}
+\label{tab:val}
+\footnotesize
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+& & \multicolumn{3}{c}{CV32E40X} & \multicolumn{3}{c}{CV32E40P}\\
+\cmidrule(lr){3-5}\cmidrule(lr){6-8}
+kernel & instructions & model & RTL & error & model & RTL & error\\
+\midrule
+\texttt{matmult-int} & 97{,}748      & 134{,}543   & 134{,}545   & 0.00\% & 134{,}543   & 134{,}547   & 0.00\%\\
+\texttt{primecount}  & 2{,}273{,}871 & 3{,}927{,}222 & 3{,}927{,}224 & 0.00\% & 3{,}927{,}222 & 3{,}927{,}226 & 0.00\%\\
+\texttt{edn}         & 49{,}365      & 65{,}177    & 65{,}179    & 0.00\% & 65{,}177    & 65{,}181    & 0.01\%\\
+\texttt{tarfind}     & 53{,}846      & 117{,}147   & 117{,}149   & 0.00\% & 117{,}147   & 117{,}151   & 0.00\%\\
+\texttt{md5sum}      & 52{,}607      & 71{,}398    & 71{,}400    & 0.00\% & 71{,}398    & 71{,}402    & 0.01\%\\
+\texttt{statemate}   & 1{,}159       & 1{,}604     & 1{,}606     & 0.12\% & 1{,}604     & 1{,}608     & 0.25\%\\
+\texttt{crc32}       & 24{,}608      & 29{,}735    & 29{,}737    & 0.01\% & 29{,}735    & 29{,}739    & 0.01\%\\
+\bottomrule
+\end{tabular}
+\end{table*}
+
 \texttt{spike -l} yields a commit trace of the unmodified binary. A Python
 model assigns each instruction its documented cost from the CV32E40X or
 CV32E40P user manual~\cite{cv32e40x,cv32e40p} and adds documented penalties:
@@ -170,49 +196,6 @@ cycles their replacement will itself take.
 
 \section{Validation}
 
-Ground truth is Verilator~\cite{verilator} simulation of each core through
-\texttt{core-v-verif}, with the measured region bracketed by \texttt{rdcycle}.
-
-\begin{table*}[!t]
-\centering
-\caption{Model versus RTL on seven Embench-IoT kernels at
-\texttt{LOCAL\_SCALE\_FACTOR=1}. The model under-predicts slightly and
-consistently, by the few cycles of the \texttt{rdcycle} pair that brackets the
-measured region.}
-\label{tab:val}
-\footnotesize
-\setlength{\tabcolsep}{6pt}
-\begin{tabular}{@{}lrrrrrrr@{}}
-\toprule
-& & \multicolumn{3}{c}{CV32E40X} & \multicolumn{3}{c}{CV32E40P}\\
-\cmidrule(lr){3-5}\cmidrule(lr){6-8}
-kernel & instructions & model & RTL & error & model & RTL & error\\
-\midrule
-\texttt{matmult-int} & 97{,}748      & 134{,}543   & 134{,}545   & 0.00\% & 134{,}543   & 134{,}547   & 0.00\%\\
-\texttt{primecount}  & 2{,}273{,}871 & 3{,}927{,}222 & 3{,}927{,}224 & 0.00\% & 3{,}927{,}222 & 3{,}927{,}226 & 0.00\%\\
-\texttt{edn}         & 49{,}365      & 65{,}177    & 65{,}179    & 0.00\% & 65{,}177    & 65{,}181    & 0.01\%\\
-\texttt{tarfind}     & 53{,}846      & 117{,}147   & 117{,}149   & 0.00\% & 117{,}147   & 117{,}151   & 0.00\%\\
-\texttt{md5sum}      & 52{,}607      & 71{,}398    & 71{,}400    & 0.00\% & 71{,}398    & 71{,}402    & 0.01\%\\
-\texttt{statemate}   & 1{,}159       & 1{,}604     & 1{,}606     & 0.12\% & 1{,}604     & 1{,}608     & 0.25\%\\
-\texttt{crc32}       & 24{,}608      & 29{,}735    & 29{,}737    & 0.01\% & 29{,}735    & 29{,}739    & 0.01\%\\
-\bottomrule
-\end{tabular}
-\end{table*}
-
-Table~\ref{tab:val} gives 14 points at worst 0.25\%, though that number only
-means something alongside how we reached it. For most of the project
-\texttt{crc32} sat at $+3.45\%$ on \emph{both} cores, and identical error on two
-different microarchitectures pointed at shared logic rather than either pipeline.
-Instruction length was being inferred from the printed width of the hex encoding,
-but \texttt{spike -l} zero-pads compressed encodings to eight digits too, so
-every compressed instruction was mis-sized; \texttt{crc32} branches to one at a
-misaligned address and was charged a cycle it never paid on all 1{,}023
-iterations. Taking length from the encoding's low two bits, as RISC-V defines,
-fixed it. We only found it because a newly added kernel produced a 9\% error too
-large to write off, which is how latent modelling bugs tend to surface.
-
-\section{Predicting a change before building it}
-
 \begin{table}[!t]
 \centering
 \caption{Predicted versus measured effect of an ISA change. The Zbb row
@@ -230,6 +213,23 @@ Xpulp, matmult & 40P & $1.305\times$  & $1.502\times$  & $+15\%$\\
 \bottomrule
 \end{tabular}
 \end{table}
+
+Ground truth is Verilator~\cite{verilator} simulation of each core through
+\texttt{core-v-verif}, with the measured region bracketed by \texttt{rdcycle}.
+
+Table~\ref{tab:val} gives 14 points at worst 0.25\%, though that number only
+means something alongside how we reached it. For most of the project
+\texttt{crc32} sat at $+3.45\%$ on \emph{both} cores, and identical error on two
+different microarchitectures pointed at shared logic rather than either pipeline.
+Instruction length was being inferred from the printed width of the hex encoding,
+but \texttt{spike -l} zero-pads compressed encodings to eight digits too, so
+every compressed instruction was mis-sized; \texttt{crc32} branches to one at a
+misaligned address and was charged a cycle it never paid on all 1{,}023
+iterations. Taking length from the encoding's low two bits, as RISC-V defines,
+fixed it. We only found it because a newly added kernel produced a 9\% error too
+large to write off, which is how latent modelling bugs tend to surface.
+
+\section{Predicting a change before building it}
 
 Zbb is predicted from a baseline trace before the bitmanip hardware is enabled.
 Xpulp is harder: Spike cannot execute Xpulp at all, so the extension's binary
