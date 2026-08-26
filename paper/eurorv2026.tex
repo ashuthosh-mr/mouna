@@ -4,9 +4,8 @@
 % Compiles on Overleaf (IEEEtran ships there).  No local TeX needed.
 %
 % BEFORE SUBMITTING:
-%   1. Verify the \cite{cidre} arXiv id (2509.15782) against the real paper.
-%      This is the last unchecked fact in the paper.
-%   2. Optionally add a personal contact address (see the author block).
+%   1. Optionally add a personal contact address (see the author block).
+% All citations are now verified against their sources.
 % Submitting unaffiliated: Calligo's publication policy is unknown, so the
 % affiliation is not asserted. It can go on the camera-ready instead.
 %=============================================================================
@@ -75,16 +74,18 @@ branch and jump flushes consuming 8--25\% of all cycles, with IPC between 0.45
 and 0.80. A custom-instruction search that ranks candidates by how much
 \emph{arithmetic} they remove is therefore optimising the wrong term.
 
-Existing instruction-set-extension (ISE) search tools estimate benefit from
-instruction counts or from a simulator with no microarchitecture~\cite{cidre}.
-We argue the estimate must instead come from a model of the specific target
-pipeline, and that the model must be validated against that core's RTL before
-any of its recommendations are trusted. The work continues
+Microarchitecture-aware instruction-set-extension (ISE) design for RISC-V has
+been studied before, reporting up to $2.47\times$ on Embench and
+MiBench~\cite{rezunov}. Our emphasis differs in two respects. First, the estimate
+here comes from a model of one specific target pipeline, taken from that core's
+published documentation rather than fitted to results, and checked against the
+core's own RTL before any of its recommendations are trusted. Second, we cost the
+mechanism by which a custom instruction attaches to the core, which turns out to
+decide which candidates can pay at all. The work continues
 PARISCV~\cite{pariscv1}, a profiler for application-specific RISC-V
-optimisation. What is new here is that the estimate comes from a cycle model
-checked against the target core's own RTL, so a candidate can be scored before
-any hardware for it exists. This paper reports that validation and what it then
-revealed.
+optimisation, replacing its estimate with one a candidate can be scored against
+before any hardware for it exists. This paper reports that validation and what it
+then revealed.
 
 \section{Methodology}
 
@@ -271,8 +272,9 @@ and the author is solely responsible for the content and for any errors.
 \small
 \bibitem{embench} J.~Bennett \emph{et al.}, ``Embench: A Modern Embedded
 Benchmark Suite,'' \url{https://www.embench.org}.
-% VERIFY this arXiv id before submitting.
-\bibitem{cidre} ``CIDRE: Custom Instruction Discovery,'' arXiv:2509.15782, 2025.
+\bibitem{rezunov} E.~Rezunov, N.~Zurstra{\ss}en, L.~M.~Reimann and R.~Leupers,
+``Automatic Microarchitecture-Aware Custom Instruction Design for RISC-V
+Processors,'' arXiv:2509.15782, 2025.
 \bibitem{cv32e40x} OpenHW Group, \emph{CV32E40X User Manual}.
 \bibitem{cv32e40p} OpenHW Group, \emph{CV32E40P User Manual}.
 \bibitem{cvxif} OpenHW Group, \emph{CORE-V eXtension Interface (CV-X-IF)
