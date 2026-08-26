@@ -12,6 +12,8 @@
 \documentclass[conference,10pt]{IEEEtran}
 \usepackage[utf8]{inputenc}
 \usepackage{booktabs,graphicx,balance}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
 \usepackage[hidelinks]{hyperref}
 \usepackage{microtype}
 \IEEEoverridecommandlockouts
@@ -60,7 +62,7 @@ custom instructions whose measured savings all fell inside their predicted
 bands. Two results were negative and are the most useful: a correct CV-X-IF
 multiply-accumulate coprocessor won \emph{exactly zero} cycles, because the
 interface costs two cycles of offload and a two-instruction fusion is therefore
-break-even by construction; and 3.6--9.1\% of all cycles are lost purely to
+break-even by construction; and up to 8.4\% of all cycles are lost purely to
 branch-target misalignment, which on one kernel exceeds the entire benefit of
 the bitmanip extension and needs no hardware at all. All code, patches and
 measurements are open source.
@@ -68,11 +70,45 @@ measurements are open source.
 
 \section{Motivation}
 
-On a short in-order pipeline, arithmetic is rarely the bottleneck. Our stall
-breakdown across seven Embench-IoT~\cite{embench} kernels on CV32E40X shows
-branch and jump flushes consuming 8--25\% of all cycles, with IPC between 0.45
-and 0.80. A custom-instruction search that ranks candidates by how much
-\emph{arithmetic} they remove is therefore optimising the wrong term.
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  ybar stacked, bar width=9pt,
+  width=1.03\columnwidth, height=3.7cm,
+  ymin=0, ymax=100,
+  ylabel={\% of cycles}, ylabel near ticks,
+  symbolic x coords={matmult,primecount,edn,md5sum,statemate,crc32,tarfind},
+  xtick=data,
+  x tick label style={rotate=30,anchor=east,font=\scriptsize},
+  y tick label style={font=\scriptsize},
+  ylabel style={font=\scriptsize},
+  legend style={font=\scriptsize,at={(0.5,1.02)},anchor=south,
+                legend columns=3,draw=none,column sep=3pt},
+  every axis plot/.append style={draw=none},
+]
+\addplot coordinates {(matmult,72.7)(primecount,57.9)(edn,75.7)(md5sum,73.7)(statemate,72.3)(crc32,82.8)(tarfind,46.0)};
+\addplot coordinates {(matmult,16.6)(primecount,23.7)(edn,14.7)(md5sum,17.3)(statemate,12.1)(crc32,6.9)(tarfind,17.1)};
+\addplot coordinates {(matmult,2.4)(primecount,1.7)(edn,1.4)(md5sum,6.9)(statemate,5.9)(crc32,6.9)(tarfind,9.2)};
+\addplot coordinates {(matmult,8.3)(primecount,5.7)(edn,6.9)(md5sum,2.2)(statemate,5.2)(crc32,3.4)(tarfind,8.4)};
+\addplot coordinates {(matmult,0)(primecount,11.1)(edn,1.3)(md5sum,0)(statemate,4.5)(crc32,0)(tarfind,0.4)};
+\addplot coordinates {(matmult,0)(primecount,0)(edn,0)(md5sum,0)(statemate,0)(crc32,0)(tarfind,19.1)};
+\legend{compute,branch flush,jump flush,target misalign,load-use,divide}
+\end{axis}
+\end{tikzpicture}
+\caption{Where the cycles go on CV32E40X. Compute is the IPC${=}1$ ideal;
+everything above it is a stall the manual documents. Control flow costs 14--26\%
+on every kernel, and target misalignment alone costs 2.2--8.4\% while needing no
+hardware change at all. \texttt{tarfind} is the exception, dominated by divide
+latency.}
+\label{fig:breakdown}
+\end{figure}
+
+On a short in-order pipeline, arithmetic is rarely the bottleneck.
+Fig.~\ref{fig:breakdown} decomposes seven Embench-IoT~\cite{embench} kernels on
+CV32E40X: branch and jump flushes take 14--26\% of all cycles and IPC sits
+between 0.46 and 0.83. A custom-instruction search that ranks candidates by how
+much \emph{arithmetic} they remove is therefore optimising the wrong term.
 
 Microarchitecture-aware instruction-set-extension (ISE) design for RISC-V has
 been studied before, reporting up to $2.47\times$ on Embench and
@@ -142,21 +178,17 @@ kernel & instructions & model & RTL & error & model & RTL & error\\
 \end{tabular}
 \end{table*}
 
-Table~\ref{tab:val} gives 14 points at worst 0.25\% error. We stress that this
-figure is only meaningful alongside how it was reached. For most of the project
-\texttt{crc32} sat at $+3.45\%$ on \emph{both} cores while everything else was
-under 2\%; identical error on two different microarchitectures indicated shared
-logic, not either pipeline. The cause was that instruction length was inferred
-from the printed width of the hex encoding in the trace, but \texttt{spike -l}
-zero-pads compressed encodings to eight digits as well, so every compressed
-instruction in every trace was mis-sized. The bug stayed dormant wherever hot
-branch targets were word-aligned or genuinely 32-bit; \texttt{crc32} branches to
-a compressed instruction at a misaligned address and was wrongly charged one
-cycle on all 1{,}023 iterations. Deriving length from the encoding's low two
-bits, as RISC-V defines, moved \texttt{crc32} to $-0.01\%$ and the worst case to
-0.25\%. We only found it because a newly added kernel produced a 9\% error that
-was too large to write off. Widening the benchmark set is how latent modelling
-bugs come to light.
+Table~\ref{tab:val} gives 14 points at worst 0.25\%, though that number only
+means something alongside how we reached it. For most of the project
+\texttt{crc32} sat at $+3.45\%$ on \emph{both} cores, and identical error on two
+different microarchitectures pointed at shared logic rather than either pipeline.
+Instruction length was being inferred from the printed width of the hex encoding,
+but \texttt{spike -l} zero-pads compressed encodings to eight digits too, so
+every compressed instruction was mis-sized; \texttt{crc32} branches to one at a
+misaligned address and was charged a cycle it never paid on all 1{,}023
+iterations. Taking length from the encoding's low two bits, as RISC-V defines,
+fixed it. We only found it because a newly added kernel produced a 9\% error too
+large to write off, which is how latent modelling bugs tend to surface.
 
 \section{Predicting a change before building it}
 
@@ -231,7 +263,7 @@ clearest evidence for why Xpulp lives in the decoder and why CV-X-IF suits
 coarse-grained offload instead.
 
 \textbf{Free cycles with no hardware.} Branch-target misalignment costs
-3.6--9.1\% of all cycles across our kernels. On \texttt{edn} that is 4{,}478
+2.2--8.4\% of all cycles across our kernels. On \texttt{edn} that is 4{,}465
 cycles, larger than the 3{,}669 cycles won by enabling the entire bitmanip
 extension. All it needs is alignment from the compiler or linker.
 
