@@ -17,8 +17,9 @@
 
 \begin{document}
 
-\title{Deciding What Hardware to Build Before Building It:\\
-A Trace-Driven Cycle Model Validated to 0.25\% on OpenHW CORE-V}
+\title{The Interface Sets the Granularity:\\
+A Validated Cycle Model for Custom-Instruction\\
+Discovery on OpenHW CORE-V}
 
 % AFFILIATION: you are between roles, and calligotech.com is not an
 % affiliation you currently hold -- claiming it would be a factual
@@ -139,16 +140,18 @@ surface.
 
 \begin{table}[t]
 \centering
-\caption{Predicted versus measured effect of an ISA change.}
+\caption{Predicted versus measured effect of an ISA change. The Zbb row
+is cycles saved; the Xpulp rows are speedup.}
 \label{tab:predict}
-\small
-\begin{tabular}{llrrr}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}llrrr@{}}
 \toprule
 change & core & predicted & measured & err\\
 \midrule
-enable Zbb & 40X & 3{,}570 cyc saved & 3{,}669 & $-2.7\%$\\
-Xpulp, single loop & 40P & $3.243\times$ & $3.241\times$ & $-0.10\%$\\
-Xpulp, $8{\times}8$ matmult & 40P & $1.305\times$ & $1.502\times$ & $+15\%$\\
+Zbb enabled    & 40X & 3{,}570        & 3{,}669        & $-2.7\%$\\
+Xpulp, 1 loop  & 40P & $3.243\times$  & $3.241\times$  & $-0.10\%$\\
+Xpulp, matmult & 40P & $1.305\times$  & $1.502\times$  & $+15\%$\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -243,10 +246,10 @@ Benchmark Suite,'' \url{https://www.embench.org}.
 \bibitem{cvxif} OpenHW Group, \emph{CORE-V eXtension Interface (CV-X-IF)
 Specification}.
 \bibitem{verilator} W.~Snyder, ``Verilator,'' \url{https://verilator.org}.
-% VERIFY exact venue/year for RedMulE before submitting.
-\bibitem{redmule} Y.~Tortorella \emph{et al.}, ``RedMulE: A Compact FP16
-Matrix-Multiplication Accelerator for Adaptive Deep Learning on RISC-V-Based
-Ultra-Low-Power SoCs,'' \emph{DATE}, 2022.
+\bibitem{redmule} Y.~Tortorella, L.~Bertaccini, L.~Benini, D.~Rossi and
+F.~Conti, ``RedMulE: A Mixed-Precision Matrix-Matrix Operation Engine for
+Flexible and Energy-Efficient On-Chip Linear Algebra and TinyML Training
+Acceleration,'' arXiv:2301.03904, 2023.
 \bibitem{xpulp} M.~Gautschi \emph{et al.}, ``Near-Threshold RISC-V Core With
 DSP Extensions for Scalable IoT Endpoint Devices,'' \emph{IEEE Trans. VLSI
 Syst.}, 2017.
