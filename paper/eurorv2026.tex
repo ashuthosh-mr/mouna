@@ -70,7 +70,13 @@ measurements are open source.
 
 \section{Motivation}
 
-\begin{figure}[t]
+On a short in-order pipeline, arithmetic is rarely the bottleneck.
+Fig.~\ref{fig:breakdown} decomposes seven Embench-IoT~\cite{embench} kernels on
+CV32E40X: branch and jump flushes take 14--26\% of all cycles and IPC sits
+between 0.46 and 0.83. A custom-instruction search that ranks candidates by how
+much \emph{arithmetic} they remove is therefore optimising the wrong term.
+
+\begin{figure}[!b]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
@@ -103,12 +109,6 @@ hardware change at all. \texttt{tarfind} is the exception, dominated by divide
 latency.}
 \label{fig:breakdown}
 \end{figure}
-
-On a short in-order pipeline, arithmetic is rarely the bottleneck.
-Fig.~\ref{fig:breakdown} decomposes seven Embench-IoT~\cite{embench} kernels on
-CV32E40X: branch and jump flushes take 14--26\% of all cycles and IPC sits
-between 0.46 and 0.83. A custom-instruction search that ranks candidates by how
-much \emph{arithmetic} they remove is therefore optimising the wrong term.
 
 Microarchitecture-aware instruction-set-extension (ISE) design for RISC-V has
 been studied before, reporting up to $2.47\times$ on Embench and
