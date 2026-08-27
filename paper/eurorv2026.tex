@@ -1,13 +1,13 @@
 %=============================================================================
 % Euro-RV 2026 (MICRO 2026, Athens, Oct 31) -- 2-page WIP submission
 % Deadline: August 27, 2026.  Single-blind: authors ARE named.
-% Compiles on Overleaf (IEEEtran ships there).  No local TeX needed.
+% Compiles with Overleaf or tectonic; self-contained, no external figure files.
 %
 % BEFORE SUBMITTING:
 %   1. Optionally add a personal contact address (see the author block).
-% All citations are now verified against their sources.
-% Submitting unaffiliated: Calligo's publication policy is unknown, so the
-% affiliation is not asserted. It can go on the camera-ready instead.
+% All citations verified against their sources. Submitting unaffiliated:
+% Calligo's publication policy is unknown, so the affiliation is not asserted;
+% it can go on the camera-ready instead.
 %=============================================================================
 \documentclass[conference,10pt]{IEEEtran}
 \usepackage[utf8]{inputenc}
@@ -38,13 +38,9 @@
 \title{PARISCV v2: A Validated Cycle Model for\\
 Custom-Instruction Discovery}
 
-% AFFILIATION. Listing the employer is coherent with using the employer's
-% email address, which the author block already does; "Independent Researcher"
-% beside an @calligotech.com address is the one pairing to avoid. Worth a
-% one-line check with your manager first if Calligo has a publication-review
-% policy -- this is personal-time work, but the affiliation is what associates
-% it with them. To keep the paper unaffiliated instead, comment this block out
-% and use the alternative below with a PERSONAL email address.
+% Unaffiliated, by decision: Calligo's publication-review policy is unknown, so
+% the affiliation is not asserted on the submission. It can be added to the
+% camera-ready using the commented variant below.
 \author{\IEEEauthorblockN{Ashuthosh M. R.}
 \IEEEauthorblockA{Independent Researcher}}
 
@@ -217,17 +213,11 @@ Xpulp, matmult & 40P & $1.305\times$  & $1.502\times$  & $+15\%$\\
 Ground truth is Verilator~\cite{verilator} simulation of each core through
 \texttt{core-v-verif}, with the measured region bracketed by \texttt{rdcycle}.
 
-Table~\ref{tab:val} gives 14 points at worst 0.25\%, though that number only
-means something alongside how we reached it. For most of the project
-\texttt{crc32} sat at $+3.45\%$ on \emph{both} cores, and identical error on two
-different microarchitectures pointed at shared logic rather than either pipeline.
-Instruction length was being inferred from the printed width of the hex encoding,
-but \texttt{spike -l} zero-pads compressed encodings to eight digits too, so
-every compressed instruction was mis-sized; \texttt{crc32} branches to one at a
-misaligned address and was charged a cycle it never paid on all 1{,}023
-iterations. Taking length from the encoding's low two bits, as RISC-V defines,
-fixed it. We only found it because a newly added kernel produced a 9\% error too
-large to write off, which is how latent modelling bugs tend to surface.
+Table~\ref{tab:val} gives 14 points at worst 0.25\%. Reaching that accuracy
+required fixing a decoding bug in our own tooling that had mis-sized every
+compressed instruction, and which surfaced only when a newly added kernel
+produced a 9\% error too large to write off: widening the benchmark set is how
+latent modelling bugs come to light.
 
 \section{Predicting a change before building it}
 
