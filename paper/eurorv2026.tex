@@ -62,7 +62,7 @@ Choosing a custom instruction or an ISA extension for an embedded RISC-V core
 normally means writing RTL first and measuring afterwards. We present a
 trace-driven alternative: an analytical cycle model, derived from the OpenHW
 CORE-V user manuals rather than fitted to data, that consumes a Spike
-instruction trace and predicts real-core cycle counts within \textbf{0.25\%}
+instruction trace and predicts real-core cycle counts within 0.25\%
 worst case (typically under 0.01\%) across seven Embench-IoT kernels on two
 cores, CV32E40X and CV32E40P. Because the model costs a trace rather than a
 simulation, it scores hardware that does not yet exist. We use it to predict
@@ -260,10 +260,10 @@ instruction, costing back what the fusion won. One instruction won its full
 predicted 2{,}048 cycles and another won zero, by the same mechanism at
 different strengths. A point estimate would have been wrong in both directions.
 
-\textbf{The interface, not the arithmetic, sets the granularity.} We
+The interface, not the arithmetic, sets the granularity. We
 implemented \texttt{pg.mac}, a fused multiply-accumulate, as a CV-X-IF
 coprocessor~\cite{cvxif} on CV32E40X. It computes correctly and won
-\textbf{zero cycles}: 13{,}321 versus 13{,}321. The offload costs a cycle,
+zero cycles: 13{,}321 versus 13{,}321. The offload costs a cycle,
 because the result must be registered and handed back over
 \texttt{result\_valid}/\texttt{result\_ready}, so the fused instruction retires
 in two cycles where \texttt{mul; add} took two. \emph{A two-instruction fusion
@@ -276,7 +276,7 @@ measurement rather than assumed. The same operation \emph{in} the pipeline
 clearest evidence for why Xpulp lives in the decoder and why CV-X-IF suits
 coarse-grained offload instead.
 
-\textbf{Free cycles with no hardware.} Branch-target misalignment costs
+Some cycles are free. Branch-target misalignment costs
 2.2--8.4\% of all cycles across our kernels. On \texttt{edn} that is 4{,}465
 cycles, larger than the 3{,}669 cycles won by enabling the entire bitmanip
 extension. All it needs is alignment from the compiler or linker.
