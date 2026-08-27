@@ -289,11 +289,8 @@ measurements predicted real-core cycle counts on two OpenHW cores to within
 hardware existed: whether to enable Zbb, what Xpulp would be worth, and which
 four custom instructions to add. Those instructions recovered 10--15\% of their
 kernels' cycles wherever they paid at all, and Xpulp reached $3.24\times$ on a
-single loop. The result we did not anticipate is that the
-interface, not the arithmetic, sets the smallest fusion worth building. Two
-upstream bugs were found and patched on the way, one leaving every CV32E40X
-load and store carrying zero in \texttt{core-v-verif}'s Verilator wrapper, the
-other mis-ordering nested hardware-loop registers in the PULP GCC fork.
+single loop. The result we did not anticipate is that the interface, not the
+arithmetic, sets the smallest fusion worth building.
 
 This remains work in progress. The model covers in-order pipelines with a
 zero-wait-state memory; extending it to a cached core is ongoing. The
